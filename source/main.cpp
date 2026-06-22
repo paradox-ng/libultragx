@@ -20,6 +20,9 @@
 #include "platform/sd.h"
 #include "ship/Context.h"
 #include "libultraship/bridge.h"
+#include "ship/utils/binarytools/BinaryReader.h"
+#include "ship/utils/binarytools/BinaryWriter.h"
+#include "ship/utils/binarytools/MemoryStream.h"
 
 static void *xfb = nullptr;
 static GXRModeObj *rmode = nullptr;
@@ -129,6 +132,28 @@ int main(int argc, char **argv) {
     report("\nCVar gTestValue = %d (expect 42)\n", CVarGetInteger("gTestValue", -1));
     report("CVar gTestName  = %s\n", CVarGetString("gTestName", "(unset)"));
     report("CVar gMissing   = %d (expect -1)\n", CVarGetInteger("gMissing", -1));
+
+    // 7) Binary IO + endianness round-trip (the big-endian PPC concern, exercised).
+    {
+        auto stream = std::make_shared<Ship::MemoryStream>();
+        Ship::BinaryWriter w(stream);
+        w.SetEndianness(Ship::Endianness::Big);
+        w.Write((uint32_t)0x11223344);
+
+        std::vector<char> raw = stream->ToVector();
+        report("\nBinaryWriter: %u bytes, first = 0x%02X (expect 0x11, big-endian)\n",
+               (unsigned)raw.size(), raw.empty() ? 0 : (unsigned char)raw[0]);
+
+        Ship::BinaryReader r(stream);
+        r.Seek(0, Ship::SeekOffsetType::Start);
+        r.SetEndianness(Ship::Endianness::Big);
+        uint32_t asBig = r.ReadUInt32();
+        r.Seek(0, Ship::SeekOffsetType::Start);
+        r.SetEndianness(Ship::Endianness::Little);
+        uint32_t asLittle = r.ReadUInt32();
+        report("BinaryReader Big    = 0x%08X (expect 0x11223344)\n", (unsigned)asBig);
+        report("BinaryReader Little = 0x%08X (expect 0x44332211)\n", (unsigned)asLittle);
+    }
 
     // 6) Persist the report to the SD so it can be read off the card.
     if (dev) {

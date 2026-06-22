@@ -35,7 +35,8 @@ endif
 #---------------------------------------------------------------------------------
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
-SOURCES		:=	source source/platform source/ship source/config source/bridge source/log
+SOURCES		:=	source source/platform source/ship source/config source/bridge \
+				source/log source/utils/binarytools
 DATA		:=	data
 INCLUDES	:=	source include
 
