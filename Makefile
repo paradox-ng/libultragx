@@ -17,6 +17,10 @@ endif
 PLATFORM	?=	gamecube
 export PLATFORM
 
+# Which app to build (one main per dir under source/apps): smoke | gfxdemo
+APP		?=	smoke
+export APP
+
 ifeq ($(PLATFORM),wii)
 include $(DEVKITPPC)/wii_rules
 PLATFORM_LIBS	:=	-lwiiuse -lbte
@@ -35,7 +39,7 @@ endif
 #---------------------------------------------------------------------------------
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
-SOURCES		:=	source source/platform source/ship source/config source/bridge \
+SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
 				source/log source/utils/binarytools source/window/gui source/debug
 DATA		:=	data
 INCLUDES	:=	source include
