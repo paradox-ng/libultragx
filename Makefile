@@ -40,7 +40,7 @@ endif
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
-				source/log source/utils/binarytools source/window/gui source/debug
+				source/log source/utils/binarytools source/window/gui source/debug source/gfx
 DATA		:=	data
 INCLUDES	:=	source include
 

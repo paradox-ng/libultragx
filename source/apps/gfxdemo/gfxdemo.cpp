@@ -1,11 +1,15 @@
-// libultragx gfx demo: prove one N64 combiner mode maps onto GX TEV.
+// libultragx gfx demo: the N64-combiner -> GX TEV mapping, several modes at once.
 //
-// Renders a spinning triangle textured with a procedural checkerboard, with a
-// single TEV stage configured as MODULATE (texel * rasterized vertex color).
-// That stage is exactly the N64 G_CC_MODULATERGBA combiner (texel * shade), so
-// this is the first concrete proof that N64 Fast3D combiners can be expressed as
-// GX fixed-function TEV stages. Everything visible here is direct GX (no Fast3D
-// yet) to keep the proof isolated. Press START (GC) / HOME (Wii) to exit.
+// Draws a 2x2 grid of quads, each sharing the same checkerboard texture and the
+// same per-vertex color gradient, but rendered through a different N64 color
+// combiner expressed as GX TEV (see source/gfx/gfx_gx_tev.cpp):
+//
+//   top-left  = SHADE        (vertex color only, no texture)
+//   top-right = TEXTURE      (texel only, no shade)
+//   bot-left  = MODULATE     (texel * shade   = N64 G_CC_MODULATERGBA)
+//   bot-right = MODULATE_ENV (texel * env-color tint)
+//
+// Direct GX, no Fast3D yet. Press START (GC) / HOME (Wii) to exit.
 
 #include <gccore.h>
 #include <ogcsys.h>
@@ -15,6 +19,8 @@
 #include <wiiuse/wpad.h>
 #endif
 
+#include "gfx/gfx_gx_tev.h"
+
 #define DEFAULT_FIFO_SIZE (256 * 1024)
 #define TEX_W 32
 #define TEX_H 32
@@ -23,17 +29,13 @@ static void *frameBuffer[2] = { NULL, NULL };
 static GXRModeObj *rmode = NULL;
 static u16 *texData = NULL; // GX_TF_RGB565, tiled, 32-byte aligned
 
-// Build a checkerboard in linear RGB565, then swizzle it into GX_TF_RGB565 tile
-// order (4x4 texels per tile, row-major within and across tiles). This swizzle
-// is the same job gfx_gx's UploadTexture will do for N64 textures.
 static void make_checker_texture(void) {
     static u16 linear[TEX_W * TEX_H];
-    for (int y = 0; y < TEX_H; y++) {
+    for (int y = 0; y < TEX_H; y++)
         for (int x = 0; x < TEX_W; x++) {
             bool on = (((x >> 2) + (y >> 2)) & 1) != 0;
             linear[y * TEX_W + x] = on ? 0xFFFF /* white */ : 0x001F /* blue */;
         }
-    }
     texData = (u16 *)memalign(32, TEX_W * TEX_H * sizeof(u16));
     int k = 0;
     for (int ty = 0; ty < TEX_H; ty += 4)
@@ -44,16 +46,24 @@ static void make_checker_texture(void) {
     DCFlushRange(texData, TEX_W * TEX_H * sizeof(u16));
 }
 
+static void draw_quad(float cx, float cy, float s) {
+    GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
+        GX_Position3f32(cx - s, cy + s, 0); GX_Color4u8(0xff, 0xff, 0xff, 0xff); GX_TexCoord2f32(0, 0);
+        GX_Position3f32(cx + s, cy + s, 0); GX_Color4u8(0xff, 0x40, 0x40, 0xff); GX_TexCoord2f32(1, 0);
+        GX_Position3f32(cx + s, cy - s, 0); GX_Color4u8(0x40, 0x40, 0xff, 0xff); GX_TexCoord2f32(1, 1);
+        GX_Position3f32(cx - s, cy - s, 0); GX_Color4u8(0x40, 0xff, 0x40, 0xff); GX_TexCoord2f32(0, 1);
+    GX_End();
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    Mtx view, model, modelview;
+    Mtx view, modelview;
     Mtx44 perspective;
     u32 fb = 0;
-    f32 rot = 0.0f;
     GXColor background = { 0x10, 0x10, 0x10, 0xff };
-    guVector cam = { 0, 0, 0 }, up = { 0, 1, 0 }, look = { 0, 0, -1 }, yaxis = { 0, 1, 0 };
+    GXColor envGreen = { 0x20, 0xff, 0x20, 0xff };
 
     VIDEO_Init();
     PAD_Init();
@@ -89,15 +99,15 @@ int main(int argc, char **argv) {
     GX_CopyDisp(frameBuffer[fb], GX_TRUE);
     GX_SetDispCopyGamma(GX_GM_1_0);
 
-    // --- texture upload ---
+    // texture
     make_checker_texture();
     GXTexObj texObj;
     GX_InitTexObj(&texObj, texData, TEX_W, TEX_H, GX_TF_RGB565, GX_REPEAT, GX_REPEAT, GX_FALSE);
-    GX_InitTexObjFilterMode(&texObj, GX_NEAR, GX_NEAR); // point sampling, like the N64 default
+    GX_InitTexObjFilterMode(&texObj, GX_NEAR, GX_NEAR);
     GX_LoadTexObj(&texObj, GX_TEXMAP0);
     GX_InvalidateTexAll();
 
-    // --- vertex format: position + color + texcoord, all supplied inline ---
+    // vertex format: pos + color + texcoord, supplied inline
     GX_ClearVtxDesc();
     GX_SetVtxDesc(GX_VA_POS,  GX_DIRECT);
     GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
@@ -110,15 +120,18 @@ int main(int argc, char **argv) {
     GX_SetNumTexGens(1);
     GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 
-    // ONE TEV stage = MODULATE: output = texel * rasterized vertex color.
-    // This IS the N64 G_CC_MODULATERGBA combiner (texel * shade).
-    GX_SetNumTevStages(1);
-    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
-    GX_SetTevOp(GX_TEVSTAGE0, GX_MODULATE);
-
+    guVector cam = { 0, 0, 0 }, up = { 0, 1, 0 }, look = { 0, 0, -1 };
     guLookAt(view, &cam, &up, &look);
     guPerspective(perspective, 45.0f, (f32)rmode->viWidth / (f32)rmode->viHeight, 0.1f, 300.0f);
     GX_LoadProjectionMtx(perspective, GX_PERSPECTIVE);
+
+    const float C = 1.05f, S = 0.95f; // grid cell center offset, quad half-size
+    struct { float cx, cy; LugxCombiner mode; } quads[4] = {
+        { -C,  C, LUGX_CC_SHADE },        // top-left
+        {  C,  C, LUGX_CC_TEXTURE },      // top-right
+        { -C, -C, LUGX_CC_MODULATE },     // bottom-left
+        {  C, -C, LUGX_CC_MODULATE_ENV }, // bottom-right
+    };
 
     while (1) {
         PAD_ScanPads();
@@ -130,19 +143,17 @@ int main(int argc, char **argv) {
 
         GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
 
-        guMtxRotAxisDeg(model, &yaxis, rot);
-        guMtxTransApply(model, model, 0.0f, 0.0f, -3.0f);
-        guMtxConcat(view, model, modelview);
+        guMtxIdentity(modelview);
+        guMtxTransApply(modelview, modelview, 0.0f, 0.0f, -5.5f);
+        guMtxConcat(view, modelview, modelview);
         GX_LoadPosMtxImm(modelview, GX_PNMTX0);
 
-        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
-            GX_Position3f32( 0.0f,  1.0f, 0.0f); GX_Color4u8(0xff, 0xff, 0xff, 0xff); GX_TexCoord2f32(0.5f, 0.0f);
-            GX_Position3f32(-1.0f, -1.0f, 0.0f); GX_Color4u8(0xff, 0x60, 0x60, 0xff); GX_TexCoord2f32(0.0f, 1.0f);
-            GX_Position3f32( 1.0f, -1.0f, 0.0f); GX_Color4u8(0x60, 0x60, 0xff, 0xff); GX_TexCoord2f32(1.0f, 1.0f);
-        GX_End();
+        for (int i = 0; i < 4; i++) {
+            lugx_tev_setup(quads[i].mode, envGreen);
+            draw_quad(quads[i].cx, quads[i].cy, S);
+        }
 
         GX_DrawDone();
-
         fb ^= 1;
         GX_SetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
         GX_SetColorUpdate(GX_TRUE);
@@ -150,8 +161,6 @@ int main(int argc, char **argv) {
         VIDEO_SetNextFramebuffer(frameBuffer[fb]);
         VIDEO_Flush();
         VIDEO_WaitVSync();
-
-        rot += 1.0f;
     }
 
     return 0;
