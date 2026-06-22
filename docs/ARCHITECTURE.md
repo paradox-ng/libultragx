@@ -88,6 +88,33 @@ devkitPPC + libogc, built in Docker (`devkitpro/devkitppc`), tested on Dolphin
 Per-platform object dirs (`build_gamecube/`, `build_wii/`) so both coexist. The
 GX/VI code is identical across targets; only Wii-remote input is `HW_RVL`-gated.
 
+## On-SD layout and path resolution
+
+Target GameCube setup: PicoBoot + Swiss + SD2SP2 + microSD. Each game is a `.dol`
+next to a same-named folder holding its assets and writable data:
+
+```
+sd:/<anywhere>/
+  Ghostship.dol
+  Ghostship/              <- base dir (the "app directory"); name = .dol stem
+    *.o2r                 read-only assets (ResourceManager loads these)
+    save.bin              save data (write)
+    config.cvar           CVar / settings persistence (write)
+```
+
+libultragx mounts the SD card (GameCube: libfat `__io_gcsd2` for SD2SP2, with
+SD Gecko slots A/B as fallback; Wii: the front SD slot) and derives the base dir
+from `argv[0]` (the `.dol` path Swiss passes via the argv protocol):
+`dirname(argv0) + "/" + stem(argv0) + "/"`. So naming the folder after the `.dol`
+and dropping the pair anywhere on the card works with zero config. The per-game
+glue may override the name; fallback when `argv[0]` is absent is
+`sd:/libultragx/<game>/`.
+
+This is exactly how libultragx implements libultraship's path API:
+`Context::GetAppDirectoryPath`, `GetPathRelativeToAppDirectory`, and
+`LocateFileAcrossAppDirs` all resolve under this base dir. Resolution lands in M1
+(Context); `.o2r` reads in M3 (ResourceManager); saves in M4.
+
 ## Milestones to "Mario renders"
 
 - **M0 - done.** GX bring-up: spinning triangle, pipeline proven on GameCube.
@@ -103,8 +130,9 @@ GX/VI code is identical across targets; only Wii-remote input is `HW_RVL`-gated.
 ## Risks / open questions
 
 1. **`.otr`/`.o2r` is a zip archive.** Need a lean zip reader over libfat/SD.
-   GameCube SD access needs an adapter (SD Gecko / SD2SP2); memory card is the
-   native save path.
+   Target GC has SD2SP2 + PicoBoot + Swiss confirmed, so SD access is via libfat
+   `__io_gcsd2` (no blocker); saves live in the per-game SD folder by default,
+   with GC memory card as an optional backend later.
 2. **C++ footprint on GameCube's 24 MB.** libultragx stays C++ (devkitPPC handles
    it; the Wii U port is C++) but lean; watch the budget at M3. Wii validated first
    when RAM is tight.
