@@ -2,20 +2,39 @@
 
 #include <gccore.h>
 
-// First slice of the N64 color-combiner -> GX TEV mapping (the core of gfx_gx).
+// N64 color-combiner -> GX TEV mapping (the core of gfx_gx).
 //
-// The N64 RDP color combiner computes (A - B) * C + D from a small set of inputs
-// (TEXEL0/1, SHADE, PRIM, ENV, ...). GX's TEV stages are a different fixed-function
-// form (out = d + lerp(a, b, c), with bias/scale/clamp), so each N64 combiner mode
-// becomes a specific TEV stage configuration. These are the most common modes,
-// expressed directly; the full table (decoding Fast3D's combiner ids) builds on
-// this. Call before GX_Begin.
-enum LugxCombiner {
-    LUGX_CC_SHADE,        // out = shade            (vertex color only; no texture)
-    LUGX_CC_TEXTURE,      // out = texel            (texture replaces shade)
-    LUGX_CC_MODULATE,     // out = texel * shade    (N64 G_CC_MODULATERGBA)
-    LUGX_CC_MODULATE_ENV, // out = texel * env      (env-color tint; uses envColor)
+// The N64 combiner evaluates (A - B) * C + D for color and, separately, for alpha,
+// each slot selecting one of a small set of sources. GX's TEV stage computes
+// out = D + ((1-C)*A + C*B) (add/sub, bias, scale, clamp). The common N64 forms
+// map onto one TEV stage:
+//   * B == 0:   (A)*C + D     -> GX in (a=ZERO, b=A, c=C, d=D)  -> D + A*C
+//   * D == B:   (A-B)*C + B   -> GX in (a=B,    b=A, c=C, d=ZERO) -> lerp(B,A,C)
+// The fully general B!=0, D!=B case needs a second stage; that is a TODO. Every
+// combiner SM64/Ghostship uses falls into the two cases above.
+
+// Combiner input sources (the subset the games use).
+enum LugxCcSrc {
+    LUGX_CC_0,
+    LUGX_CC_1,
+    LUGX_CC_COMBINED,
+    LUGX_CC_TEXEL0,
+    LUGX_CC_TEXEL0_A,
+    LUGX_CC_SHADE,
+    LUGX_CC_SHADE_A,
+    LUGX_CC_PRIM,
+    LUGX_CC_PRIM_A,
+    LUGX_CC_ENV,
+    LUGX_CC_ENV_A,
 };
 
-// Configure GX TEV stage 0 for the given combiner. envColor is used by *_ENV modes.
-void lugx_tev_setup(LugxCombiner mode, GXColor envColor);
+// A 1-cycle N64 combiner: color = (cA-cB)*cC+cD, alpha = (aA-aB)*aC+aD.
+// Field order matches the 8 arguments of the gbi G_CC_* macros.
+struct LugxCombiner {
+    LugxCcSrc cA, cB, cC, cD; // color
+    LugxCcSrc aA, aB, aC, aD; // alpha
+};
+
+// Configure GX TEV stage 0 to evaluate the given combiner. Caller must have the
+// primitive color in GX_TEVREG0 and the environment color in GX_TEVREG1.
+void lugx_tev_from_combiner(const LugxCombiner* cc);

@@ -4,12 +4,13 @@
 // same per-vertex color gradient, but rendered through a different N64 color
 // combiner expressed as GX TEV (see source/gfx/gfx_gx_tev.cpp):
 //
-//   top-left  = SHADE        (vertex color only, no texture)
-//   top-right = TEXTURE      (texel only, no shade)
-//   bot-left  = MODULATE     (texel * shade   = N64 G_CC_MODULATERGBA)
-//   bot-right = MODULATE_ENV (texel * env-color tint)
+//   top-left  = G_CC_SHADE        (D = SHADE:  vertex color, no texture)
+//   top-right = G_CC_DECALRGBA    (D = TEXEL0: texture replaces shade)
+//   bot-left  = G_CC_MODULATERGBA (TEXEL0 * SHADE)
+//   bot-right = G_CC_PRIMITIVE    (D = PRIM:   solid primitive color)
 //
-// Direct GX, no Fast3D yet. Press START (GC) / HOME (Wii) to exit.
+// Each is the real N64 combiner definition fed through the general decoder in
+// source/gfx/gfx_gx_tev.cpp. Direct GX, no Fast3D yet. Press START / HOME to exit.
 
 #include <gccore.h>
 #include <ogcsys.h>
@@ -63,7 +64,8 @@ int main(int argc, char **argv) {
     Mtx44 perspective;
     u32 fb = 0;
     GXColor background = { 0x10, 0x10, 0x10, 0xff };
-    GXColor envGreen = { 0x20, 0xff, 0x20, 0xff };
+    GXColor primColor = { 0xff, 0x80, 0x00, 0xff }; // orange (-> TEV reg 0 = PRIM)
+    GXColor envColor  = { 0x20, 0xff, 0x20, 0xff };  // green  (-> TEV reg 1 = ENV)
 
     VIDEO_Init();
     PAD_Init();
@@ -120,17 +122,35 @@ int main(int argc, char **argv) {
     GX_SetNumTexGens(1);
     GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 
+    // Combiner register colors: primitive in TEV reg 0, environment in reg 1.
+    GX_SetTevColor(GX_TEVREG0, primColor);
+    GX_SetTevColor(GX_TEVREG1, envColor);
+
     guVector cam = { 0, 0, 0 }, up = { 0, 1, 0 }, look = { 0, 0, -1 };
     guLookAt(view, &cam, &up, &look);
     guPerspective(perspective, 45.0f, (f32)rmode->viWidth / (f32)rmode->viHeight, 0.1f, 300.0f);
     GX_LoadProjectionMtx(perspective, GX_PERSPECTIVE);
 
+    // Real SM64/Ghostship combiners, transcribed from the gbi.h G_CC_* defs.
+    static const LugxCombiner CC_SHADE = {
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE,
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE_A };
+    static const LugxCombiner CC_DECALRGBA = {
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_TEXEL0,
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_TEXEL0_A };
+    static const LugxCombiner CC_MODULATERGBA = {
+        LUGX_CC_TEXEL0, LUGX_CC_0, LUGX_CC_SHADE, LUGX_CC_0,
+        LUGX_CC_TEXEL0_A, LUGX_CC_0, LUGX_CC_SHADE_A, LUGX_CC_0 };
+    static const LugxCombiner CC_PRIMITIVE = {
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_PRIM,
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_PRIM_A };
+
     const float C = 1.05f, S = 0.95f; // grid cell center offset, quad half-size
-    struct { float cx, cy; LugxCombiner mode; } quads[4] = {
-        { -C,  C, LUGX_CC_SHADE },        // top-left
-        {  C,  C, LUGX_CC_TEXTURE },      // top-right
-        { -C, -C, LUGX_CC_MODULATE },     // bottom-left
-        {  C, -C, LUGX_CC_MODULATE_ENV }, // bottom-right
+    struct { float cx, cy; const LugxCombiner* cc; } quads[4] = {
+        { -C,  C, &CC_SHADE },        // top-left:     G_CC_SHADE
+        {  C,  C, &CC_DECALRGBA },     // top-right:    G_CC_DECALRGBA
+        { -C, -C, &CC_MODULATERGBA },  // bottom-left:  G_CC_MODULATERGBA
+        {  C, -C, &CC_PRIMITIVE },     // bottom-right: G_CC_PRIMITIVE
     };
 
     while (1) {
@@ -149,7 +169,7 @@ int main(int argc, char **argv) {
         GX_LoadPosMtxImm(modelview, GX_PNMTX0);
 
         for (int i = 0; i < 4; i++) {
-            lugx_tev_setup(quads[i].mode, envGreen);
+            lugx_tev_from_combiner(quads[i].cc);
             draw_quad(quads[i].cx, quads[i].cy, S);
         }
 
