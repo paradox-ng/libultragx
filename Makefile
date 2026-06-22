@@ -40,7 +40,8 @@ endif
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
-				source/log source/utils/binarytools source/window/gui source/debug source/gfx
+				source/log source/utils/binarytools source/window/gui source/debug source/gfx \
+				source/ship/resource/archive
 DATA		:=	data
 INCLUDES	:=	source include
 
@@ -54,12 +55,12 @@ LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS		:=	$(PLATFORM_LIBS) -lfat -logc -lm
+LIBS		:=	$(PLATFORM_LIBS) -lfat -lz -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries (top level, containing include and lib)
 #---------------------------------------------------------------------------------
-LIBDIRS		:=
+LIBDIRS		:=	$(PORTLIBS_PATH)/ppc
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless adding rules for new
