@@ -1,0 +1,9 @@
+# Build output
+build/
+*.elf
+*.dol
+*.map
+
+# Editor / OS cruft
+*.swp
+.DS_Store
