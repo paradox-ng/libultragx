@@ -1,8 +1,9 @@
 // libultragx gfx demo: the N64-combiner -> GX TEV mapping, several modes at once.
 //
-// Draws a 2x2 grid of quads, each sharing the same checkerboard texture and the
-// same per-vertex color gradient, but rendered through a different N64 color
-// combiner expressed as GX TEV (see source/gfx/gfx_gx_tev.cpp):
+// Draws a 2x2 grid of quads, each sharing the same full-color RGBA8 texture
+// (converted from linear RGBA32 by source/gfx/gfx_gx_tex.cpp) and the same
+// per-vertex color gradient, but rendered through a different N64 color combiner
+// expressed as GX TEV (see source/gfx/gfx_gx_tev.cpp):
 //
 //   top-left  = G_CC_SHADE        (D = SHADE:  vertex color, no texture)
 //   top-right = G_CC_DECALRGBA    (D = TEXEL0: texture replaces shade)
@@ -21,6 +22,7 @@
 #endif
 
 #include "gfx/gfx_gx_tev.h"
+#include "gfx/gfx_gx_tex.h"
 
 #define DEFAULT_FIFO_SIZE (256 * 1024)
 #define TEX_W 32
@@ -28,23 +30,25 @@
 
 static void *frameBuffer[2] = { NULL, NULL };
 static GXRModeObj *rmode = NULL;
-static u16 *texData = NULL; // GX_TF_RGB565, tiled, 32-byte aligned
+static u8 *texData = NULL; // GX_TF_RGBA8, tiled, 32-byte aligned
 
-static void make_checker_texture(void) {
-    static u16 linear[TEX_W * TEX_H];
+// A full-color 32-bit test texture: red ramps along x, green along y, and a sharp
+// checker drives blue. Lots of distinct texels, so any error in the RGBA8 tile
+// swizzle (lugx_tex_rgba32_to_gx_rgba8) would show up immediately.
+static void make_texture(void) {
+    static u8 linear[TEX_W * TEX_H * 4];
     for (int y = 0; y < TEX_H; y++)
         for (int x = 0; x < TEX_W; x++) {
+            u8 *p = &linear[(y * TEX_W + x) * 4];
             bool on = (((x >> 2) + (y >> 2)) & 1) != 0;
-            linear[y * TEX_W + x] = on ? 0xFFFF /* white */ : 0x001F /* blue */;
+            p[0] = (u8)(x * 255 / (TEX_W - 1)); // R ramp
+            p[1] = (u8)(y * 255 / (TEX_H - 1)); // G ramp
+            p[2] = on ? 0xFF : 0x30;            // B checker
+            p[3] = 0xFF;                        // A
         }
-    texData = (u16 *)memalign(32, TEX_W * TEX_H * sizeof(u16));
-    int k = 0;
-    for (int ty = 0; ty < TEX_H; ty += 4)
-        for (int tx = 0; tx < TEX_W; tx += 4)
-            for (int y = 0; y < 4; y++)
-                for (int x = 0; x < 4; x++)
-                    texData[k++] = linear[(ty + y) * TEX_W + (tx + x)];
-    DCFlushRange(texData, TEX_W * TEX_H * sizeof(u16));
+    texData = (u8 *)memalign(32, TEX_W * TEX_H * 4);
+    lugx_tex_rgba32_to_gx_rgba8(linear, texData, TEX_W, TEX_H);
+    DCFlushRange(texData, TEX_W * TEX_H * 4);
 }
 
 static void draw_quad(float cx, float cy, float s) {
@@ -102,9 +106,9 @@ int main(int argc, char **argv) {
     GX_SetDispCopyGamma(GX_GM_1_0);
 
     // texture
-    make_checker_texture();
+    make_texture();
     GXTexObj texObj;
-    GX_InitTexObj(&texObj, texData, TEX_W, TEX_H, GX_TF_RGB565, GX_REPEAT, GX_REPEAT, GX_FALSE);
+    GX_InitTexObj(&texObj, texData, TEX_W, TEX_H, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
     GX_InitTexObjFilterMode(&texObj, GX_NEAR, GX_NEAR);
     GX_LoadTexObj(&texObj, GX_TEXMAP0);
     GX_InvalidateTexAll();
