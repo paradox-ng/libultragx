@@ -1,17 +1,15 @@
-// libultragx gfx demo: the N64-combiner -> GX TEV mapping, several modes at once.
+// libultragx gfx demo: N64 render state (alpha test vs alpha blend) on GX.
 //
-// Draws a 2x2 grid of quads, each sharing the same full-color RGBA8 texture
-// (converted from linear RGBA32 by source/gfx/gfx_gx_tex.cpp) and the same
-// per-vertex color gradient, but rendered through a different N64 color combiner
-// expressed as GX TEV (see source/gfx/gfx_gx_tev.cpp):
+// A dark gradient backdrop fills the view; two textured quads are drawn in front
+// of it through the MODULATE combiner, using a texture whose "off" checker squares
+// are nearly transparent (alpha 32) and "on" squares opaque (alpha 255):
 //
-//   top-left  = G_CC_SHADE        (D = SHADE:  vertex color, no texture)
-//   top-right = G_CC_DECALRGBA    (D = TEXEL0: texture replaces shade)
-//   bot-left  = G_CC_MODULATERGBA (TEXEL0 * SHADE)
-//   bot-right = G_CC_PRIMITIVE    (D = PRIM:   solid primitive color)
+//   left  = ALPHA TEST  (alpha <= 128 discarded) -> hard holes, backdrop shows through
+//   right = ALPHA BLEND (src-alpha transparency)  -> soft, backdrop shows faintly
 //
-// Each is the real N64 combiner definition fed through the general decoder in
-// source/gfx/gfx_gx_tev.cpp. Direct GX, no Fast3D yet. Press START / HOME to exit.
+// Exercises gfx_gx_tev (combiner), gfx_gx_tex (RGBA32->GX_TF_RGBA8), and
+// gfx_gx_state (depth / alpha compare / blend). Direct GX, no Fast3D yet.
+// Press START (GC) / HOME (Wii) to exit.
 
 #include <gccore.h>
 #include <ogcsys.h>
@@ -23,6 +21,7 @@
 
 #include "gfx/gfx_gx_tev.h"
 #include "gfx/gfx_gx_tex.h"
+#include "gfx/gfx_gx_state.h"
 
 #define DEFAULT_FIFO_SIZE (256 * 1024)
 #define TEX_W 32
@@ -32,9 +31,8 @@ static void *frameBuffer[2] = { NULL, NULL };
 static GXRModeObj *rmode = NULL;
 static u8 *texData = NULL; // GX_TF_RGBA8, tiled, 32-byte aligned
 
-// A full-color 32-bit test texture: red ramps along x, green along y, and a sharp
-// checker drives blue. Lots of distinct texels, so any error in the RGBA8 tile
-// swizzle (lugx_tex_rgba32_to_gx_rgba8) would show up immediately.
+// Full-color texture with a checker-driven alpha: "on" squares opaque, "off"
+// squares nearly transparent, so alpha test/blend have something to act on.
 static void make_texture(void) {
     static u8 linear[TEX_W * TEX_H * 4];
     for (int y = 0; y < TEX_H; y++)
@@ -43,20 +41,22 @@ static void make_texture(void) {
             bool on = (((x >> 2) + (y >> 2)) & 1) != 0;
             p[0] = (u8)(x * 255 / (TEX_W - 1)); // R ramp
             p[1] = (u8)(y * 255 / (TEX_H - 1)); // G ramp
-            p[2] = on ? 0xFF : 0x30;            // B checker
-            p[3] = 0xFF;                        // A
+            p[2] = 0xC0;                        // B
+            p[3] = on ? 0xFF : 0x20;            // A: opaque vs nearly transparent
         }
     texData = (u8 *)memalign(32, TEX_W * TEX_H * 4);
     lugx_tex_rgba32_to_gx_rgba8(linear, texData, TEX_W, TEX_H);
     DCFlushRange(texData, TEX_W * TEX_H * 4);
 }
 
-static void draw_quad(float cx, float cy, float s) {
+// A quad at (cx, cy) and depth z, half-size s, with corner colors + 0..1 texcoords.
+static void draw_quad(float cx, float cy, float z, float s,
+                      u8 r0, u8 g0, u8 b0, u8 r1, u8 g1, u8 b1) {
     GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
-        GX_Position3f32(cx - s, cy + s, 0); GX_Color4u8(0xff, 0xff, 0xff, 0xff); GX_TexCoord2f32(0, 0);
-        GX_Position3f32(cx + s, cy + s, 0); GX_Color4u8(0xff, 0x40, 0x40, 0xff); GX_TexCoord2f32(1, 0);
-        GX_Position3f32(cx + s, cy - s, 0); GX_Color4u8(0x40, 0x40, 0xff, 0xff); GX_TexCoord2f32(1, 1);
-        GX_Position3f32(cx - s, cy - s, 0); GX_Color4u8(0x40, 0xff, 0x40, 0xff); GX_TexCoord2f32(0, 1);
+        GX_Position3f32(cx - s, cy + s, z); GX_Color4u8(r0, g0, b0, 0xff); GX_TexCoord2f32(0, 0);
+        GX_Position3f32(cx + s, cy + s, z); GX_Color4u8(r1, g1, b1, 0xff); GX_TexCoord2f32(1, 0);
+        GX_Position3f32(cx + s, cy - s, z); GX_Color4u8(r0, g0, b0, 0xff); GX_TexCoord2f32(1, 1);
+        GX_Position3f32(cx - s, cy - s, z); GX_Color4u8(r1, g1, b1, 0xff); GX_TexCoord2f32(0, 1);
     GX_End();
 }
 
@@ -67,9 +67,14 @@ int main(int argc, char **argv) {
     Mtx view, modelview;
     Mtx44 perspective;
     u32 fb = 0;
-    GXColor background = { 0x10, 0x10, 0x10, 0xff };
-    GXColor primColor = { 0xff, 0x80, 0x00, 0xff }; // orange (-> TEV reg 0 = PRIM)
-    GXColor envColor  = { 0x20, 0xff, 0x20, 0xff };  // green  (-> TEV reg 1 = ENV)
+    GXColor background = { 0x08, 0x08, 0x08, 0xff };
+
+    static const LugxCombiner CC_SHADE = {
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE,
+        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE_A };
+    static const LugxCombiner CC_MODULATERGBA = {
+        LUGX_CC_TEXEL0, LUGX_CC_0, LUGX_CC_SHADE, LUGX_CC_0,
+        LUGX_CC_TEXEL0_A, LUGX_CC_0, LUGX_CC_SHADE_A, LUGX_CC_0 };
 
     VIDEO_Init();
     PAD_Init();
@@ -105,7 +110,6 @@ int main(int argc, char **argv) {
     GX_CopyDisp(frameBuffer[fb], GX_TRUE);
     GX_SetDispCopyGamma(GX_GM_1_0);
 
-    // texture
     make_texture();
     GXTexObj texObj;
     GX_InitTexObj(&texObj, texData, TEX_W, TEX_H, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
@@ -113,7 +117,6 @@ int main(int argc, char **argv) {
     GX_LoadTexObj(&texObj, GX_TEXMAP0);
     GX_InvalidateTexAll();
 
-    // vertex format: pos + color + texcoord, supplied inline
     GX_ClearVtxDesc();
     GX_SetVtxDesc(GX_VA_POS,  GX_DIRECT);
     GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
@@ -126,36 +129,10 @@ int main(int argc, char **argv) {
     GX_SetNumTexGens(1);
     GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 
-    // Combiner register colors: primitive in TEV reg 0, environment in reg 1.
-    GX_SetTevColor(GX_TEVREG0, primColor);
-    GX_SetTevColor(GX_TEVREG1, envColor);
-
     guVector cam = { 0, 0, 0 }, up = { 0, 1, 0 }, look = { 0, 0, -1 };
     guLookAt(view, &cam, &up, &look);
     guPerspective(perspective, 45.0f, (f32)rmode->viWidth / (f32)rmode->viHeight, 0.1f, 300.0f);
     GX_LoadProjectionMtx(perspective, GX_PERSPECTIVE);
-
-    // Real SM64/Ghostship combiners, transcribed from the gbi.h G_CC_* defs.
-    static const LugxCombiner CC_SHADE = {
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE,
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_SHADE_A };
-    static const LugxCombiner CC_DECALRGBA = {
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_TEXEL0,
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_TEXEL0_A };
-    static const LugxCombiner CC_MODULATERGBA = {
-        LUGX_CC_TEXEL0, LUGX_CC_0, LUGX_CC_SHADE, LUGX_CC_0,
-        LUGX_CC_TEXEL0_A, LUGX_CC_0, LUGX_CC_SHADE_A, LUGX_CC_0 };
-    static const LugxCombiner CC_PRIMITIVE = {
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_PRIM,
-        LUGX_CC_0, LUGX_CC_0, LUGX_CC_0, LUGX_CC_PRIM_A };
-
-    const float C = 1.05f, S = 0.95f; // grid cell center offset, quad half-size
-    struct { float cx, cy; const LugxCombiner* cc; } quads[4] = {
-        { -C,  C, &CC_SHADE },        // top-left:     G_CC_SHADE
-        {  C,  C, &CC_DECALRGBA },     // top-right:    G_CC_DECALRGBA
-        { -C, -C, &CC_MODULATERGBA },  // bottom-left:  G_CC_MODULATERGBA
-        {  C, -C, &CC_PRIMITIVE },     // bottom-right: G_CC_PRIMITIVE
-    };
 
     while (1) {
         PAD_ScanPads();
@@ -172,14 +149,29 @@ int main(int argc, char **argv) {
         guMtxConcat(view, modelview, modelview);
         GX_LoadPosMtxImm(modelview, GX_PNMTX0);
 
-        for (int i = 0; i < 4; i++) {
-            lugx_tev_from_combiner(quads[i].cc);
-            draw_quad(quads[i].cx, quads[i].cy, S);
-        }
+        // 1) Opaque backdrop (dark gradient), behind everything (local z = -1).
+        lugx_tev_from_combiner(&CC_SHADE);
+        lugx_set_depth(true, true);
+        lugx_set_alpha_test(false, 0);
+        lugx_set_blend(false);
+        draw_quad(0.0f, 0.0f, -1.0f, 2.4f, 0x40, 0x10, 0x10, 0x10, 0x10, 0x40);
+
+        // 2) Left: alpha-tested textured quad (hard cutout holes).
+        lugx_tev_from_combiner(&CC_MODULATERGBA);
+        lugx_set_depth(true, true);
+        lugx_set_alpha_test(true, 128);
+        lugx_set_blend(false);
+        draw_quad(-1.05f, 0.0f, 0.0f, 0.9f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+
+        // 3) Right: alpha-blended textured quad (soft transparency).
+        lugx_tev_from_combiner(&CC_MODULATERGBA);
+        lugx_set_depth(true, false);
+        lugx_set_alpha_test(false, 0);
+        lugx_set_blend(true);
+        draw_quad(1.05f, 0.0f, 0.0f, 0.9f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
 
         GX_DrawDone();
         fb ^= 1;
-        GX_SetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
         GX_SetColorUpdate(GX_TRUE);
         GX_CopyDisp(frameBuffer[fb], GX_TRUE);
         VIDEO_SetNextFramebuffer(frameBuffer[fb]);
