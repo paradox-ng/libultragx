@@ -8,16 +8,21 @@ real hardware.
 
 ## Status
 
-**M0 - pipeline bring-up (done).** A spinning vertex-colored triangle through GX
-proved the devkitPPC -> libogc -> Docker -> Dolphin loop on GameCube.
+Early bring-up, GameCube-first. Working so far:
 
-**M1 - platform foundation (in progress).** SD card mount (SD2SP2 / SD Gecko /
-Wii SD) and per-game path resolution from `argv[0]`. The current `.dol` is a
-console smoke test that reports the SD device, the resolved per-game base dir,
-and its contents - run it on hardware to validate the SD layout.
+- **GX pipeline proven** - a spinning vertex-colored triangle rendered through GX,
+  validating the devkitPPC -> libogc -> Docker -> Dolphin loop.
+- **Platform layer** - SD card mount (SD2SP2 / SD Gecko / Wii SD) and per-game
+  path resolution from `argv[0]`.
+- **libultraship-compatible API (in progress)** - the `Ship::Context` path API
+  and the CVar bridge, authored lean for GX/libogc.
+
+The current `.dol` is a console smoke test that reports the SD device, the
+resolved per-game base dir, and its contents - run it on hardware to validate the
+SD layout.
 
 See `docs/ARCHITECTURE.md` for the full design (libultragx as a drop-in
-libultraship replacement) and the milestone roadmap.
+libultraship replacement) and the roadmap.
 
 ## Building
 
@@ -47,10 +52,17 @@ Press **START** (GC controller) or **HOME** (Wii remote) to exit.
 
 ```
 libultragx/
+├── include/               # public API headers (libultraship-compatible)
+│   ├── libultraship/      # umbrella, bridge, color, log
+│   └── ship/              # Ship:: framework headers
 ├── source/
-│   ├── main.c             # current app (M1 smoke test)
-│   └── platform/          # libogc platform layer (sd, paths, ...)
-├── docs/ARCHITECTURE.md   # design + milestone roadmap
+│   ├── main.cpp           # current app (console smoke test)
+│   ├── platform/          # libogc platform layer (sd, paths)
+│   ├── ship/              # Ship::Context, ...
+│   ├── config/            # CVar store
+│   ├── bridge/            # C bridge implementations
+│   └── log/               # log sink
+├── docs/ARCHITECTURE.md   # design + roadmap
 ├── Makefile               # devkitPPC build, GameCube default (PLATFORM=wii for Wii)
 ├── Dockerfile             # pinned build image (build.sh uses upstream by default)
 ├── build.sh               # containerized `make` wrapper
