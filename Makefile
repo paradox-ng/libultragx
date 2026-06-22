@@ -35,9 +35,9 @@ endif
 #---------------------------------------------------------------------------------
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
-SOURCES		:=	source
+SOURCES		:=	source source/platform
 DATA		:=	data
-INCLUDES	:=	include
+INCLUDES	:=	source include
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -49,7 +49,7 @@ LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS		:=	$(PLATFORM_LIBS) -logc -lm
+LIBS		:=	$(PLATFORM_LIBS) -lfat -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries (top level, containing include and lib)

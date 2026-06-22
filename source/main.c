@@ -1,46 +1,44 @@
-// libultragx - step 1: boot to GX and draw a spinning triangle.
+// libultragx - M1 smoke test: SD mount + per-game path resolution.
 //
-// This is the canonical libogc GX bring-up: VI + GX init, a double-buffered
-// external framebuffer (XFB), and a single TEV stage that passes per-vertex
-// colors straight through. It exists only to prove the
-// devkitPPC + libogc + Docker + Dolphin pipeline end-to-end before any Fast3D
-// work lands in gfx_gx.c. Press START (GC controller) or HOME (Wii) to exit.
-//
-// Builds for both targets from one source: GameCube is the default (HW_DOL),
-// Wii is the secondary build (HW_RVL). The GX/VI code is identical on both; only
-// the Wii-remote input is Wii-only, guarded by HW_RVL (defined by wii_rules).
+// Console diagnostics (no GX yet) so the SD2SP2 + per-game-folder layout can be
+// validated on real GameCube hardware (PicoBoot + Swiss). It reports what the
+// loader passed as argv, which SD device mounted, the base directory resolved
+// from argv[0], and the contents of that directory. The M0 spinning triangle is
+// preserved in git history. Press START (GC) or HOME (Wii) to exit.
 
 #include <gccore.h>
 #include <ogcsys.h>
+#include <stdio.h>
+#include <string.h>
+#include <dirent.h>
 #ifdef HW_RVL
 #include <wiiuse/wpad.h>
 #endif
-#include <stdlib.h>
-#include <string.h>
-#include <malloc.h>
 
-#define DEFAULT_FIFO_SIZE (256 * 1024)
+#include "platform/sd.h"
+#include "platform/paths.h"
 
-static void *frameBuffer[2] = { NULL, NULL };
+static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
 
+static void list_dir(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) {
+        printf("    (cannot open %s)\n", path);
+        return;
+    }
+    struct dirent *e;
+    int n = 0;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue; // skip . and .. and dotfiles
+        printf("    %s\n", e->d_name);
+        if (++n >= 12) { printf("    ...\n"); break; }
+    }
+    if (n == 0) printf("    (empty)\n");
+    closedir(d);
+}
+
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-
-    Mtx view;            // camera (world -> view)
-    Mtx model, modelview;
-    Mtx44 perspective;
-    u32 fb = 0;
-    f32 rot = 0.0f;
-
-    GXColor background = { 0x00, 0x00, 0x00, 0xff };
-    guVector cam   = { 0.0f, 0.0f, 0.0f };
-    guVector up    = { 0.0f, 1.0f, 0.0f };
-    guVector look  = { 0.0f, 0.0f, -1.0f };
-    guVector yaxis = { 0.0f, 1.0f, 0.0f };
-
-    // --- video init -------------------------------------------------------
     VIDEO_Init();
     PAD_Init();
 #ifdef HW_RVL
@@ -48,57 +46,45 @@ int main(int argc, char **argv) {
 #endif
 
     rmode = VIDEO_GetPreferredMode(NULL);
-
-    frameBuffer[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
-    frameBuffer[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    console_init(xfb, 20, 20, rmode->fbWidth, rmode->xfbHeight,
+                 rmode->fbWidth * VI_DISPLAY_PIX_SZ);
 
     VIDEO_Configure(rmode);
-    VIDEO_SetNextFramebuffer(frameBuffer[fb]);
+    VIDEO_SetNextFramebuffer(xfb);
     VIDEO_SetBlack(FALSE);
     VIDEO_Flush();
     VIDEO_WaitVSync();
     if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-    // --- GX (Flipper/Hollywood) init -------------------------------------
-    void *gpfifo = memalign(32, DEFAULT_FIFO_SIZE);
-    memset(gpfifo, 0, DEFAULT_FIFO_SIZE);
-    GX_Init(gpfifo, DEFAULT_FIFO_SIZE);
+    printf("\x1b[2J"); // clear screen
+    printf("libultragx - M1 smoke test\n");
+    printf("==========================\n\n");
 
-    GX_SetCopyClear(background, GX_MAX_Z24);
+    // 1) What did the loader hand us? (Tells us how Swiss passes the .dol path.)
+    printf("argc = %d\n", argc);
+    for (int i = 0; i < argc && i < 4; i++)
+        printf("  argv[%d] = %s\n", i, argv[i] ? argv[i] : "(null)");
+    printf("\n");
 
-    f32 yscale = GX_GetYScaleFactor(rmode->efbHeight, rmode->xfbHeight);
-    u32 xfbHeight = GX_SetDispCopyYScale(yscale);
-    GX_SetScissor(0, 0, rmode->fbWidth, rmode->efbHeight);
-    GX_SetDispCopySrc(0, 0, rmode->fbWidth, rmode->efbHeight);
-    GX_SetDispCopyDst(rmode->fbWidth, xfbHeight);
-    GX_SetCopyFilter(rmode->aa, rmode->sample_pattern, GX_TRUE, rmode->vfilter);
-    GX_SetFieldMode(rmode->field_rendering,
-                    ((rmode->viHeight == 2 * rmode->xfbHeight) ? GX_ENABLE : GX_DISABLE));
+    // 2) Mount the SD card.
+    const char *dev = lugx_sd_mount();
+    if (dev) printf("SD mounted via: %s\n", dev);
+    else     printf("SD mount FAILED (no SD2SP2 / SD Gecko / Wii SD found)\n");
+    printf("\n");
 
-    GX_SetPixelFmt(rmode->aa ? GX_PF_RGB565_Z16 : GX_PF_RGB8_Z24, GX_ZC_LINEAR);
+    // 3) Resolve the per-game base directory from argv[0].
+    char base[256];
+    lugx_resolve_base_dir(argc > 0 ? argv[0] : NULL, base, sizeof base);
+    printf("resolved base dir: %s\n", base);
 
-    GX_SetCullMode(GX_CULL_NONE);
-    GX_CopyDisp(frameBuffer[fb], GX_TRUE);
-    GX_SetDispCopyGamma(GX_GM_1_0);
+    // 4) Does it exist? List what's in it (assets, saves, ...).
+    if (dev) {
+        printf("contents:\n");
+        list_dir(base);
+    }
 
-    // --- vertex format: position + per-vertex color, both supplied inline --
-    GX_ClearVtxDesc();
-    GX_SetVtxDesc(GX_VA_POS,  GX_DIRECT);
-    GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS,  GX_POS_XYZ,  GX_F32,   0);
-    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
-
-    // --- one TEV stage that just passes the rasterized vertex color through -
-    GX_SetNumChans(1);
-    GX_SetNumTexGens(0);
-    GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
-    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
-
-    // --- camera / projection ---------------------------------------------
-    guLookAt(view, &cam, &up, &look);
-    guPerspective(perspective, 45.0f,
-                  (f32)rmode->viWidth / (f32)rmode->viHeight, 0.1f, 300.0f);
-    GX_LoadProjectionMtx(perspective, GX_PERSPECTIVE);
+    printf("\nPress START (GC) / HOME (Wii) to exit.\n");
 
     while (1) {
         PAD_ScanPads();
@@ -107,34 +93,9 @@ int main(int argc, char **argv) {
         WPAD_ScanPads();
         if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) break;
 #endif
-
-        GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
-
-        // spin about Y, pushed 5 units into the screen
-        guMtxRotAxisDeg(model, &yaxis, rot);
-        guMtxTransApply(model, model, 0.0f, 0.0f, -5.0f);
-        guMtxConcat(view, model, modelview);
-        GX_LoadPosMtxImm(modelview, GX_PNMTX0);
-
-        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
-            GX_Position3f32( 0.0f,  1.0f, 0.0f); GX_Color4u8(0xff, 0x00, 0x00, 0xff);
-            GX_Position3f32(-1.0f, -1.0f, 0.0f); GX_Color4u8(0x00, 0xff, 0x00, 0xff);
-            GX_Position3f32( 1.0f, -1.0f, 0.0f); GX_Color4u8(0x00, 0x00, 0xff, 0xff);
-        GX_End();
-
-        GX_DrawDone();
-
-        fb ^= 1;
-        GX_SetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
-        GX_SetColorUpdate(GX_TRUE);
-        GX_CopyDisp(frameBuffer[fb], GX_TRUE);
-
-        VIDEO_SetNextFramebuffer(frameBuffer[fb]);
-        VIDEO_Flush();
         VIDEO_WaitVSync();
-
-        rot += 1.0f;
     }
 
+    lugx_sd_unmount();
     return 0;
 }

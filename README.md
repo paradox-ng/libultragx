@@ -8,17 +8,26 @@ real hardware.
 
 ## Status
 
-**Step 1 - pipeline bring-up.** A single spinning, vertex-colored triangle
-drawn through GX, proving the devkitPPC → libogc → Docker → Dolphin loop works
-end-to-end. No Fast3D yet.
+**M0 - pipeline bring-up (done).** A spinning vertex-colored triangle through GX
+proved the devkitPPC -> libogc -> Docker -> Dolphin loop on GameCube.
+
+**M1 - platform foundation (in progress).** SD card mount (SD2SP2 / SD Gecko /
+Wii SD) and per-game path resolution from `argv[0]`. The current `.dol` is a
+console smoke test that reports the SD device, the resolved per-game base dir,
+and its contents - run it on hardware to validate the SD layout.
+
+See `docs/ARCHITECTURE.md` for the full design (libultragx as a drop-in
+libultraship replacement) and the milestone roadmap.
 
 ## Building
 
-The toolchain runs in Docker so nothing is installed on the host:
+The toolchain runs in Docker so nothing is installed on the host. GameCube is the
+default target:
 
 ```sh
-./build.sh          # runs `make` in the devkitpro/devkitppc image -> libultragx.dol
-./build.sh clean    # remove build artifacts
+./build.sh                 # GameCube -> libultragx-gamecube.dol
+./build.sh PLATFORM=wii    # Wii      -> libultragx-wii.dol
+./build.sh clean           # remove build artifacts
 ```
 
 First run pulls the `devkitpro/devkitppc` image (~1-2 GB).
@@ -28,21 +37,22 @@ First run pulls the `devkitpro/devkitppc` image (~1-2 GB).
 Dolphin runs natively on the host (flatpak) and loads the `.dol`:
 
 ```sh
-./run.sh            # boots libultragx.dol in Dolphin
+./run.sh                       # boots libultragx-gamecube.dol
+./run.sh libultragx-wii.dol    # boot the Wii build instead
 ```
 
-Press **HOME** (Wii remote) or **START** (GC controller) to exit.
+Press **START** (GC controller) or **HOME** (Wii remote) to exit.
 
 ## Layout
 
 ```
 libultragx/
-├── source/        # runtime + bring-up code (main.c for now)
-├── Makefile       # devkitPPC wii_rules build -> libultragx.dol
-├── Dockerfile     # pinned build image (build.sh uses upstream by default)
-├── build.sh       # containerized `make` wrapper
-└── run.sh         # launches Dolphin on the built .dol
+├── source/
+│   ├── main.c             # current app (M1 smoke test)
+│   └── platform/          # libogc platform layer (sd, paths, ...)
+├── docs/ARCHITECTURE.md   # design + milestone roadmap
+├── Makefile               # devkitPPC build, GameCube default (PLATFORM=wii for Wii)
+├── Dockerfile             # pinned build image (build.sh uses upstream by default)
+├── build.sh               # containerized `make` wrapper
+└── run.sh                 # launches Dolphin on the built .dol
 ```
-
-Planned: `gfx_pc.c` (Fast3D interpreter, reused), `gfx_gx.c` (Fast3D → GX, the
-core work), and a libogc platform layer (VI / PAD / ASND / FAT).
