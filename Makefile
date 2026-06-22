@@ -35,14 +35,14 @@ endif
 #---------------------------------------------------------------------------------
 TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
-SOURCES		:=	source source/platform source/ship
+SOURCES		:=	source source/platform source/ship source/config source/bridge source/log
 DATA		:=	data
 INCLUDES	:=	source include
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
-CFLAGS		=	-g -O2 -Wall $(MACHDEP) $(INCLUDE)
+CFLAGS		=	-g -O2 -Wall -DIS_BIGENDIAN $(MACHDEP) $(INCLUDE)
 CXXFLAGS	=	$(CFLAGS)
 LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
@@ -97,6 +97,8 @@ export HFILES	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 # build a list of include paths
 #---------------------------------------------------------------------------------
 export INCLUDE	:=	$(foreach dir,$(INCLUDES),-iquote $(CURDIR)/$(dir)) \
+					-I$(CURDIR)/include \
+					-I$(CURDIR)/include/libultraship \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 					-I$(CURDIR)/$(BUILD) \
 					-I$(LIBOGC_INC)

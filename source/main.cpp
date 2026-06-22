@@ -15,6 +15,7 @@
 
 #include "platform/sd.h"
 #include "ship/Context.h"
+#include "libultraship/bridge.h"
 
 static void *xfb = nullptr;
 static GXRModeObj *rmode = nullptr;
@@ -87,6 +88,14 @@ int main(int argc, char **argv) {
         printf("\ncontents of %s:\n", appDir.c_str());
         list_dir(appDir.c_str());
     }
+
+    // 5) Exercise the CVar bridge (the C API Ghostship's glue calls ~9x).
+    CVarSetInteger("gTestValue", 42);
+    CVarRegisterInteger("gTestValue", 7); // no-op: already set
+    CVarSetString("gTestName", "libultragx");
+    printf("\nCVar gTestValue = %d (expect 42)\n", CVarGetInteger("gTestValue", -1));
+    printf("CVar gTestName  = %s\n", CVarGetString("gTestName", "(unset)"));
+    printf("CVar gMissing   = %d (expect -1)\n", CVarGetInteger("gMissing", -1));
 
     printf("\nPress START (GC) / HOME (Wii) to exit.\n");
 
