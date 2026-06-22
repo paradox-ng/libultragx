@@ -6,10 +6,6 @@ libultraship targets PC, libultragx targets **GameCube and Wii** via
 devkitPPC + libogc, so Fast3D-based N64 decomp ports can run natively on the
 real hardware.
 
-Target games (all forked from their PC ports): SM64 (Ghostship), Star Fox 64
-(Starship), Mario Kart 64 (SpaghettiKart), Smash 64 (BattleShip). SM64 is the
-first target.
-
 ## Status
 
 **Step 1 - pipeline bring-up.** A single spinning, vertex-colored triangle
