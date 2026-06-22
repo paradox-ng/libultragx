@@ -4,11 +4,17 @@
 // external framebuffer (XFB), and a single TEV stage that passes per-vertex
 // colors straight through. It exists only to prove the
 // devkitPPC + libogc + Docker + Dolphin pipeline end-to-end before any Fast3D
-// work lands in gfx_gx.c. Press HOME (Wii) or START (GC controller) to exit.
+// work lands in gfx_gx.c. Press START (GC controller) or HOME (Wii) to exit.
+//
+// Builds for both targets from one source: GameCube is the default (HW_DOL),
+// Wii is the secondary build (HW_RVL). The GX/VI code is identical on both; only
+// the Wii-remote input is Wii-only, guarded by HW_RVL (defined by wii_rules).
 
 #include <gccore.h>
 #include <ogcsys.h>
+#ifdef HW_RVL
 #include <wiiuse/wpad.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
@@ -37,7 +43,9 @@ int main(int argc, char **argv) {
     // --- video init -------------------------------------------------------
     VIDEO_Init();
     PAD_Init();
+#ifdef HW_RVL
     WPAD_Init();
+#endif
 
     rmode = VIDEO_GetPreferredMode(NULL);
 
@@ -94,11 +102,11 @@ int main(int argc, char **argv) {
 
     while (1) {
         PAD_ScanPads();
+        if (PAD_ButtonsDown(0) & PAD_BUTTON_START) break;
+#ifdef HW_RVL
         WPAD_ScanPads();
-        if ((WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) ||
-            (PAD_ButtonsDown(0)  & PAD_BUTTON_START)) {
-            break;
-        }
+        if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) break;
+#endif
 
         GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build libultragx inside the devkitPPC container so the host stays clean.
-# Output: libultragx.dol / libultragx.elf in this directory. Load the .dol in
-# Dolphin (see run.sh). Any args are passed through to make, e.g. ./build.sh clean
+# Default target is GameCube -> libultragx-gamecube.dol. Args pass through to make:
+#   ./build.sh                 # GameCube build (default)
+#   ./build.sh PLATFORM=wii    # Wii build -> libultragx-wii.dol
+#   ./build.sh clean
 set -euo pipefail
 cd "$(dirname "$0")"
 

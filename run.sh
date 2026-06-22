@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Launch the built .dol in Dolphin (host flatpak). Build first with ./build.sh.
-#   ./run.sh                 # boots libultragx.dol
-#   ./run.sh some_other.dol  # boots a different image
+#   ./run.sh                 # boots libultragx-gamecube.dol (default target)
+#   ./run.sh libultragx-wii.dol   # boot the Wii build instead
+#   ./run.sh some_other.dol  # boot a different image
 set -euo pipefail
 cd "$(dirname "$0")"
 
-DOL="${1:-libultragx.dol}"
+DOL="${1:-libultragx-gamecube.dol}"
 if [ ! -f "$DOL" ]; then
   echo "No '$DOL' found - run ./build.sh first." >&2
   exit 1

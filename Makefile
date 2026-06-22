@@ -7,7 +7,25 @@ ifeq ($(strip $(DEVKITPPC)),)
 $(error "Please set DEVKITPPC in your environment. export DEVKITPPC=<path to>devkitPPC")
 endif
 
+#---------------------------------------------------------------------------------
+# Target platform: gamecube (default, primary) or wii (secondary).
+#   make                -> GameCube .dol  (libultragx-gamecube.dol)
+#   make PLATFORM=wii   -> Wii .dol       (libultragx-wii.dol)
+# The GX/VI code is identical on both; wii_rules defines HW_RVL so the Wii-only
+# bits (e.g. Wii remote input) compile in only for the Wii build.
+#---------------------------------------------------------------------------------
+PLATFORM	?=	gamecube
+export PLATFORM
+
+ifeq ($(PLATFORM),wii)
 include $(DEVKITPPC)/wii_rules
+PLATFORM_LIBS	:=	-lwiiuse -lbte
+else ifeq ($(PLATFORM),gamecube)
+include $(DEVKITPPC)/gamecube_rules
+PLATFORM_LIBS	:=
+else
+$(error Unknown PLATFORM '$(PLATFORM)' - use 'gamecube' or 'wii')
+endif
 
 #---------------------------------------------------------------------------------
 # TARGET   is the name of the output (.dol/.elf)
@@ -15,8 +33,8 @@ include $(DEVKITPPC)/wii_rules
 # SOURCES  are directories containing source code
 # INCLUDES are directories containing extra headers
 #---------------------------------------------------------------------------------
-TARGET		:=	libultragx
-BUILD		:=	build
+TARGET		:=	libultragx-$(PLATFORM)
+BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
@@ -31,7 +49,7 @@ LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS		:=	-lwiiuse -lbte -logc -lm
+LIBS		:=	$(PLATFORM_LIBS) -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries (top level, containing include and lib)
@@ -98,7 +116,9 @@ $(BUILD):
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(OUTPUT).elf $(OUTPUT).dol
+	@rm -fr build_gamecube build_wii \
+		libultragx-gamecube.elf libultragx-gamecube.dol \
+		libultragx-wii.elf libultragx-wii.dol
 
 #---------------------------------------------------------------------------------
 else
