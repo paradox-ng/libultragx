@@ -41,9 +41,11 @@ TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
 				source/log source/utils/binarytools source/window/gui source/debug source/gfx \
-				source/ship/resource/archive
+				source/ship/resource/archive \
+				extern/prism/src/prism extern/prism/src/prism/utils
 DATA		:=	data
-INCLUDES	:=	source include
+INCLUDES	:=	source include \
+				extern/prism/src extern/prism/src/prism extern/prism/src/prism/utils
 
 #---------------------------------------------------------------------------------
 # options for code generation
