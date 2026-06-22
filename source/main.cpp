@@ -1,17 +1,21 @@
-// libultragx - M1 smoke test: SD mount + Ship::Context path resolution.
+// libultragx - smoke test: SD mount + Ship::Context path resolution.
 //
 // Console diagnostics (no GX yet) validating, on real GameCube hardware
 // (PicoBoot + Swiss + SD2SP2), that the SD mounts, argv[0] from the loader is
 // usable, and the libultraship-compatible Ship::Context path API resolves the
-// per-game folder. Press START (GC) or HOME (Wii) to exit.
+// per-game folder. Everything printed is also teed to "libultragx.log" on the SD
+// so it can be read off the card afterwards. Press START (GC) or HOME (Wii) to exit.
 
 #include <gccore.h>
 #include <ogcsys.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <dirent.h>
 #ifdef HW_RVL
 #include <wiiuse/wpad.h>
 #endif
+
+#include <string>
 
 #include "platform/sd.h"
 #include "ship/Context.h"
@@ -20,21 +24,50 @@
 static void *xfb = nullptr;
 static GXRModeObj *rmode = nullptr;
 
+// Accumulates everything reported so it can be written to the SD log file.
+static std::string gReport;
+
+// Print a line to both the console and the in-memory log buffer.
+static void report(const char *fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    fputs(buf, stdout);
+    gReport += buf;
+}
+
 static void list_dir(const char *path) {
     DIR *d = opendir(path);
     if (!d) {
-        printf("    (cannot open %s)\n", path);
+        report("    (cannot open %s)\n", path);
         return;
     }
     struct dirent *e;
     int n = 0;
     while ((e = readdir(d)) != nullptr) {
         if (e->d_name[0] == '.') continue; // skip . / .. / dotfiles
-        printf("    %s\n", e->d_name);
-        if (++n >= 12) { printf("    ...\n"); break; }
+        report("    %s\n", e->d_name);
+        if (++n >= 12) { report("    ...\n"); break; }
     }
-    if (n == 0) printf("    (empty)\n");
+    if (n == 0) report("    (empty)\n");
     closedir(d);
+}
+
+// Write the accumulated report to <appDir>libultragx.log, falling back to the
+// SD root. Returns the path written, or "" on failure.
+static std::string write_log(const std::string &appDir) {
+    std::string path = appDir + "libultragx.log";
+    FILE *f = fopen(path.c_str(), "w");
+    if (!f) {
+        path = "sd:/libultragx.log";
+        f = fopen(path.c_str(), "w");
+    }
+    if (!f) return "";
+    fwrite(gReport.data(), 1, gReport.size(), f);
+    fclose(f);
+    return path;
 }
 
 int main(int argc, char **argv) {
@@ -56,21 +89,21 @@ int main(int argc, char **argv) {
     VIDEO_WaitVSync();
     if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-    printf("\x1b[2J"); // clear screen
-    printf("libultragx - M1 smoke test\n");
-    printf("==========================\n\n");
+    printf("\x1b[2J"); // clear screen (console-only, not logged)
+    report("libultragx - smoke test\n");
+    report("=======================\n\n");
 
     // 1) What did the loader hand us?
-    printf("argc = %d\n", argc);
+    report("argc = %d\n", argc);
     for (int i = 0; i < argc && i < 4; i++)
-        printf("  argv[%d] = %s\n", i, argv[i] ? argv[i] : "(null)");
-    printf("\n");
+        report("  argv[%d] = %s\n", i, argv[i] ? argv[i] : "(null)");
+    report("\n");
 
     // 2) Mount the SD card.
     const char *dev = lugx_sd_mount();
-    if (dev) printf("SD mounted via: %s\n", dev);
-    else     printf("SD mount FAILED (no SD2SP2 / SD Gecko / Wii SD found)\n");
-    printf("\n");
+    if (dev) report("SD mounted via: %s\n", dev);
+    else     report("SD mount FAILED (no SD2SP2 / SD Gecko / Wii SD found)\n");
+    report("\n");
 
     // 3) Resolve paths through the libultraship-compatible Ship::Context API.
     Ship::Context::InitPaths(argc > 0 && argv[0] ? argv[0] : "", "libultragx");
@@ -78,14 +111,14 @@ int main(int argc, char **argv) {
     std::string savePath = Ship::Context::GetPathRelativeToAppDirectory("save.bin");
     std::string located  = Ship::Context::LocateFileAcrossAppDirs("save.bin");
 
-    printf("Ship::Context::GetAppDirectoryPath()           = %s\n", appDir.c_str());
-    printf("Ship::Context::GetPathRelativeToAppDirectory() = %s\n", savePath.c_str());
-    printf("Ship::Context::LocateFileAcrossAppDirs(save)   = %s\n",
+    report("Ship::Context::GetAppDirectoryPath()           = %s\n", appDir.c_str());
+    report("Ship::Context::GetPathRelativeToAppDirectory() = %s\n", savePath.c_str());
+    report("Ship::Context::LocateFileAcrossAppDirs(save)   = %s\n",
            located.empty() ? "(not found)" : located.c_str());
 
     // 4) List the resolved app directory.
     if (dev) {
-        printf("\ncontents of %s:\n", appDir.c_str());
+        report("\ncontents of %s:\n", appDir.c_str());
         list_dir(appDir.c_str());
     }
 
@@ -93,9 +126,17 @@ int main(int argc, char **argv) {
     CVarSetInteger("gTestValue", 42);
     CVarRegisterInteger("gTestValue", 7); // no-op: already set
     CVarSetString("gTestName", "libultragx");
-    printf("\nCVar gTestValue = %d (expect 42)\n", CVarGetInteger("gTestValue", -1));
-    printf("CVar gTestName  = %s\n", CVarGetString("gTestName", "(unset)"));
-    printf("CVar gMissing   = %d (expect -1)\n", CVarGetInteger("gMissing", -1));
+    report("\nCVar gTestValue = %d (expect 42)\n", CVarGetInteger("gTestValue", -1));
+    report("CVar gTestName  = %s\n", CVarGetString("gTestName", "(unset)"));
+    report("CVar gMissing   = %d (expect -1)\n", CVarGetInteger("gMissing", -1));
+
+    // 6) Persist the report to the SD so it can be read off the card.
+    if (dev) {
+        std::string logPath = write_log(appDir);
+        // console-only (the buffer is already flushed to the file by now)
+        if (!logPath.empty()) printf("\nlog written: %s\n", logPath.c_str());
+        else                  printf("\n(could not write log file)\n");
+    }
 
     printf("\nPress START (GC) / HOME (Wii) to exit.\n");
 
