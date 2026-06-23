@@ -1,4 +1,5 @@
 #include "fast/backends/gfx_gx.h"
+#include "fast/cc_features.h"
 
 #include "gfx/gfx_gx_tex.h"
 #include "gfx/gfx_gx_state.h"
@@ -9,11 +10,13 @@
 
 namespace Fast {
 
-// What a "shader" is for the GX backend: the decoded N64 combiner plus the info
-// the interpreter queries. The 64-bit shader ids encode the RDP combine state.
+// What a "shader" is for the GX backend: the N64 combiner decoded from the 64-bit
+// shader ids (which encode the RDP combine state), kept as the full CCFeatures so
+// DrawTriangles knows the vertex layout and how to drive the TEV stages.
 struct ShaderProgram {
     uint64_t id0 = 0;
     uint64_t id1 = 0;
+    CCFeatures features{};
     LugxCombiner combiner;
     uint8_t numInputs = 1;
     bool usedTextures[2] = { true, false };
@@ -49,6 +52,14 @@ ShaderProgram* GfxRenderingAPIGX::CreateAndLoadNewShader(uint64_t shaderId0, uin
     ShaderProgram* p = new ShaderProgram();
     p->id0 = shaderId0;
     p->id1 = shaderId1;
+    // Decode the real combiner features from the packed RDP combine ids (the same
+    // decoder the interpreter uses, called across the link - see cc_features.h).
+    gfx_cc_get_features(shaderId0, shaderId1, &p->features);
+    p->numInputs = (uint8_t)p->features.numInputs;
+    p->usedTextures[0] = p->features.usedTextures[0];
+    p->usedTextures[1] = p->features.usedTextures[1];
+    // TODO(piece 2): build the TEV combiner from p->features.c[][][] instead of the
+    // MODULATE placeholder, loading CombinerUniforms::inputs into GX const regs.
     p->combiner = default_combiner();
     mShaderCache[shaderId0] = p;
     mCurrentShader = p;
