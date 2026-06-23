@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "ship/resource/File.h"
 
@@ -14,6 +15,9 @@ class Archive {
     virtual ~Archive() = default;
     virtual bool HasFile(const std::string& filePath) = 0;
     virtual std::shared_ptr<File> LoadFile(const std::string& filePath) = 0;
+
+    // All entry paths in this archive (used to build the CRC64 hash table).
+    virtual const std::vector<std::string>& GetEntryNames() = 0;
 
     // On-disk path of this archive (e.g. "sd:/sm64.o2r"). Set by the concrete
     // archive when it opens; used for shader-pack manifest naming.

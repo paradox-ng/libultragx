@@ -41,7 +41,7 @@ TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
 				source/log source/utils/binarytools source/window/gui source/debug source/gfx \
-				source/ship/resource source/ship/resource/archive \
+				source/ship/resource source/ship/resource/archive source/ship/utils \
 				source/fast source/fast/resource source/fast/debug \
 				extern/prism/src/prism extern/prism/src/prism/utils
 DATA		:=	data

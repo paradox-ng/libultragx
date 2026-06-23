@@ -22,6 +22,7 @@ class O2rArchive : public Archive {
 
     bool HasFile(const std::string& filePath) override;
     std::shared_ptr<File> LoadFile(const std::string& filePath) override;
+    const std::vector<std::string>& GetEntryNames() override;
 
   private:
     std::unique_ptr<ZipArchive> mZip;

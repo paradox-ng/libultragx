@@ -18,6 +18,10 @@ bool O2rArchive::HasFile(const std::string& filePath) {
     return mZip->Has(filePath);
 }
 
+const std::vector<std::string>& O2rArchive::GetEntryNames() {
+    return mZip->Names();
+}
+
 std::shared_ptr<File> O2rArchive::LoadFile(const std::string& filePath) {
     if (!mZip->Has(filePath)) {
         return nullptr;

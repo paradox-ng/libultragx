@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ship/resource/archive/Archive.h"
@@ -28,6 +30,7 @@ class ArchiveManager {
 
   private:
     std::vector<std::shared_ptr<Archive>> mArchives;
+    std::unordered_map<uint64_t, std::string> mHashes; // CRC64(path) -> path
 };
 
 } // namespace Ship

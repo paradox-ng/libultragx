@@ -39,3 +39,7 @@ their copyright retained:
 The new code is the **GX/TEV rendering backend** (`source/gfx/gfx_gx_*`, an
 original `Fast::GfxRenderingAPI` implementation) and the lean `ship/` framework
 the interpreter runs on (Context, ResourceManager, archives, binary tools).
+
+Also adopted verbatim: `source/ship/utils/StrHash64.cpp` + header (the CRC64
+resource-path hash; MIT / zlib-licensed, copyrights retained in the file). The
+OTR/O2R resource hashes must match this exact CRC64, so it is used as-is.
