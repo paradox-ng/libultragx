@@ -127,6 +127,12 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             // which misreads F3D opcodes (e.g. G_ENDDL 0xB8) and runs off the end
             // of the DL into garbage. Select the matching handler table first.
             Fast::gfx_set_target_ucode(ucode_f3d);
+            // The standalone DL sets NO combiner (the game sets one before calling
+            // an actor DL); the default combine_mode=0 outputs 0 -> solid black.
+            // G_CC_SHADE (1-cycle): rgbD=alphaD=SHADE(4) -> output the interpolated
+            // per-vertex shade colour, so the geometry shows in colour. Survives
+            // Run()'s SpReset (which doesn't touch combine_mode).
+            interp->mRdp->combine_mode = 0x08008000ULL;
             memcpy(interp->mRsp->MP_matrix, mpT, sizeof(mpT)); // DL doesn't set a projection
             interp->Run(dl, mtxRepl, dlRepl);
         }
