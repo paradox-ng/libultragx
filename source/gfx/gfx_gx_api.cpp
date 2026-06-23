@@ -295,12 +295,17 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
     // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),
-    // so GX needs the transpose. The matrix must already carry the GX z-mapping
-    // (a GL-convention z z-clips on GX - see scene_build / guPerspective).
+    // so GX needs the transpose.
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
             proj[r][c] = mTransform.mtx_palette[slot0][c][r];
         }
+    }
+    // Clip-z remap: the interpreter/games supply GL-convention matrices (NDC z in
+    // [-1,1]); GX's NDC z is [-1,0]. Map z' = 0.5*z - 0.5*w (this turns a GL
+    // perspective into exactly libogc guPerspective's GX matrix).
+    for (int c = 0; c < 4; c++) {
+        proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
     }
     GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
 
@@ -364,12 +369,20 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
     cu.uv_transform[0][2] = 1.0f; // scaleT
     SetCombinerUniforms(cu);
 
-    Mtx44 persp;
-    guPerspective(persp, 60.0f, 4.0f / 3.0f, 0.1f, 50.0f);
+    // GL-convention perspective (the backend remaps z to GX), stored transposed.
+    const float fovy = 60.0f * 3.14159265f / 180.0f;
+    const float cot = 1.0f / tanf(fovy * 0.5f);
+    const float asp = 4.0f / 3.0f, n = 0.1f, f = 50.0f;
+    float glp[4][4] = {};
+    glp[0][0] = cot / asp;
+    glp[1][1] = cot;
+    glp[2][2] = -(f + n) / (f - n);
+    glp[2][3] = -2.0f * f * n / (f - n);
+    glp[3][2] = -1.0f;
     TransformUniforms t{};
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
-            t.mtx_palette[0][r][c] = persp[c][r]; // stored transposed; DrawTriangles transposes back
+            t.mtx_palette[0][r][c] = glp[c][r]; // transposed; DrawTriangles transposes back
         }
     }
     t.y_scale[0] = 1.0f;
