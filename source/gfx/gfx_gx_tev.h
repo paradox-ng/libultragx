@@ -38,3 +38,11 @@ struct LugxCombiner {
 // Configure GX TEV stage 0 to evaluate the given combiner. Caller must have the
 // primitive color in GX_TEVREG0 and the environment color in GX_TEVREG1.
 void lugx_tev_from_combiner(const LugxCombiner* cc);
+
+// Configure the GX TEV stage(s) from the interpreter's decoded combiner features.
+// `inputs` are the resolved constant-input colours (CombinerUniforms::inputs):
+// generic SHADER_INPUT_1..6 constants are loaded into GX TEV registers here. This
+// is the path DrawTriangles uses; lugx_tev_from_combiner above is the older
+// explicit-source prototype.
+struct CCFeatures;
+void lugx_tev_from_features(const CCFeatures* cc, const float inputs[6][4]);

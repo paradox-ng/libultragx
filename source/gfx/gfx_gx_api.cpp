@@ -5,6 +5,7 @@
 #include "gfx/gfx_gx_state.h"
 
 #include <gccore.h>
+#include <ogc/gu.h>
 #include <malloc.h>
 #include <cstring>
 
@@ -208,17 +209,118 @@ void GfxRenderingAPIGX::SetSrgbMode() {
     // GX has no sRGB framebuffer mode; nothing to do.
 }
 
+void GfxRenderingAPIGX::SetCombinerUniforms(const CombinerUniforms& uniforms) {
+    mCombinerUniforms = uniforms;
+}
+
 // --- draw ----------------------------------------------------------------------
 
+static inline u8 float_to_u8(float f) {
+    int v = (int)(f * 255.0f + 0.5f);
+    return (u8)(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    (void)buf_vbo;
     (void)buf_vbo_len;
-    (void)buf_vbo_num_tris;
-    // TODO: the interpreter packs an interleaved float vertex buffer whose stride
-    // depends on the loaded shader (position[4], then optional rgba, one or two
-    // texcoord sets, fog, grayscale). Read the stride from mCurrentShader, bind
-    // mTileTexture[] textures, set the GX vertex descriptor/format to match, and
-    // submit GX_Begin(GX_TRIANGLES, ...) ... GX_End for buf_vbo_num_tris triangles.
+    if (mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
+        return;
+    }
+    const CCFeatures& cc = mCurrentShader->features;
+
+    // Drive the TEV stage(s) from the decoded combiner + resolved constant colours.
+    lugx_tev_from_features(&cc, mCombinerUniforms.inputs);
+
+    // Per-vertex float layout (must mirror Interpreter::GfxSpTri1):
+    //   x,y,z,w, mtx_slot, [u,v per used tile], shade(3 rgb | 3 normal)[+1 a]
+    const int numTex = (cc.usedTextures[0] ? 1 : 0) + (cc.usedTextures[1] ? 1 : 0);
+    const bool lighting = cc.opt_lighting;
+    const bool hasShade = cc.opt_shade || lighting;
+    const bool useAlpha = cc.opt_alpha;
+    const int shadeFloats = hasShade ? (lighting ? 3 : (3 + (useAlpha ? 1 : 0))) : 0;
+    const int stride = 5 + 2 * numTex + shadeFloats;
+    const int texOff = 5;
+    const int shadeOff = 5 + 2 * numTex;
+    // Lighting computes shade on the GPU vertex shader upstream; until HW lighting
+    // is wired we only submit a vertex colour for the non-lit shade case.
+    const bool submitColor = hasShade && !lighting;
+
+    // Vertex descriptor / format. Submission order is fixed: POS, CLR0, TEX0.
+    GX_ClearVtxDesc();
+    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    if (submitColor) {
+        GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+        GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+    }
+    if (numTex > 0) {
+        GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+        GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+        GX_SetNumTexGens(1);
+        GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+    } else {
+        GX_SetNumTexGens(0);
+    }
+
+    // Bring-up transform (piece 4): identity model-view + an NDC pass-through
+    // orthographic projection, so vertices given in [-1,1] clip space render
+    // directly. The interpreter's real positions are object-space and need the
+    // matrix-palette path (piece 5: GX matrix memory + PNMTXIDX + projection).
+    Mtx mv;
+    guMtxIdentity(mv);
+    guMtxTransApply(mv, mv, 0.0f, 0.0f, -1.0f); // push z within [near,far]
+    GX_LoadPosMtxImm(mv, GX_PNMTX0);
+    Mtx44 proj;
+    guOrtho(proj, 1.0f, -1.0f, -1.0f, 1.0f, 0.1f, 10.0f); // top,bottom,left,right,near,far
+    GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
+
+    const size_t verts = buf_vbo_num_tris * 3;
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
+    for (size_t i = 0; i < verts; i++) {
+        const float* v = &buf_vbo[i * (size_t)stride];
+        GX_Position3f32(v[0], v[1], v[2]);
+        if (submitColor) {
+            u8 a = useAlpha ? float_to_u8(v[shadeOff + 3]) : 255;
+            GX_Color4u8(float_to_u8(v[shadeOff + 0]), float_to_u8(v[shadeOff + 1]),
+                        float_to_u8(v[shadeOff + 2]), a);
+        }
+        if (numTex > 0) {
+            GX_TexCoord2f32(v[texOff + 0], v[texOff + 1]);
+        }
+    }
+    GX_End();
+}
+
+void GfxRenderingAPIGX::DrawBringupTriangle() {
+    // A shade-only combiner: color = shade, alpha = shade alpha
+    // ((A-B)*C+D with A=B=C=0, D=SHADE -> output is the per-vertex shade).
+    CCFeatures cc{};
+    cc.opt_shade = true;
+    cc.opt_alpha = true;
+    cc.c[0][0][0] = SHADER_0; cc.c[0][0][1] = SHADER_0; cc.c[0][0][2] = SHADER_0; cc.c[0][0][3] = SHADER_INPUT_7;
+    cc.c[0][1][0] = SHADER_0; cc.c[0][1][1] = SHADER_0; cc.c[0][1][2] = SHADER_0; cc.c[0][1][3] = SHADER_INPUT_7;
+
+    static ShaderProgram testShader;
+    testShader.features = cc;
+    mCurrentShader = &testShader;
+
+    CombinerUniforms zero{};
+    SetCombinerUniforms(zero);
+
+    // Flat unlit render state.
+    GX_SetCullMode(GX_CULL_NONE);
+    GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+    GX_SetColorUpdate(GX_TRUE);
+    GX_SetAlphaUpdate(GX_TRUE);
+    GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
+
+    // One triangle, vbo stride 9: [x,y,z,w, mtx_slot, r,g,b,a], NDC positions,
+    // distinct per-vertex colours (red/green/blue) for a visible Gouraud blend.
+    static float tri[3 * 9] = {
+         0.0f,  0.6f, 0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f, // top    red
+        -0.6f, -0.6f, 0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f, // bottom-left  green
+         0.6f, -0.6f, 0.0f, 1.0f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f, // bottom-right blue
+    };
+    DrawTriangles(tri, 3 * 9, 1);
 }
 
 // --- frame lifecycle -----------------------------------------------------------

@@ -52,7 +52,15 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     void SetCurrentPrimDepth(float depth) override;
     void SetSrgbMode() override;
 
+    // Stores the resolved combiner constant colours for the next DrawTriangles.
+    void SetCombinerUniforms(const CombinerUniforms& uniforms) override;
+
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
+
+    // Bring-up self-test (piece 4): render one Gouraud-shaded triangle through the
+    // real DrawTriangles + TEV path with the identity/ortho transform. No
+    // interpreter involved; validates the combiner decode and GX vertex submission.
+    void DrawBringupTriangle();
 
     void Init() override;
     void OnResize() override;
@@ -93,6 +101,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     FilteringMode mFilterMode = FILTER_THREE_POINT;
     ShaderProgram* mCurrentShader = nullptr;
     std::unordered_map<uint64_t, ShaderProgram*> mShaderCache; // keyed by shaderId0 (id1 folded in)
+    CombinerUniforms mCombinerUniforms{}; // latest resolved constants (prim/env/...)
 };
 
 // Factory used by the window backend to create the GX rendering backend.
