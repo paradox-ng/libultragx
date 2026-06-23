@@ -11,12 +11,14 @@
 // Separate TU from interptest.cpp: includes fast/interpreter.h (lus_gbi
 // F3DGfx/Mtx), which cannot share a TU with libogc gx.h.
 
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 
 #include "fast/interpreter.h"
 #include "fast/backends/gfx_rendering_api.h"
 #include "fast/backends/gfx_window_manager_api.h"
+#include "apps/interptest/scene_build.h"
 
 // Caches the active interpreter for the global gbi command handlers (they reach
 // it via mInstance.lock()). Not declared in interpreter.h, so forward-declare.
@@ -32,10 +34,17 @@ int lugx_interptest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
     Fast::GfxSetInstance(interp);
     interp->Init(wapi, rapi, "interptest", false, 640, 480, 0, 0);
 
-    static Fast::F3DGfx dl[1];
-    dl[0].words.w0 = (uintptr_t)0xDF000000u; // G_ENDDL (F3DEX2)
-    dl[0].words.w1 = (uintptr_t)0u;
+    // Real geometry: a hand-built F3DEX2 display list (one shaded triangle). The
+    // matrices are supplied as float replacements keyed by the DL's matrix
+    // addresses (so the interpreter takes the float path, not fixed-point).
+    LugxScene scene = lugx_build_scene_triangle();
     std::unordered_map<Mtx*, MtxF> mtxReplacements;
+    MtxF projMtx;
+    MtxF mvMtx;
+    memcpy(projMtx.mf, scene.projF, sizeof(projMtx.mf));
+    memcpy(mvMtx.mf, scene.mvF, sizeof(mvMtx.mf));
+    mtxReplacements[(Mtx*)scene.projMtxAddr] = projMtx;
+    mtxReplacements[(Mtx*)scene.mvMtxAddr] = mvMtx;
     std::unordered_map<Gfx*, Gfx*> dlReplacements;
 
     int frames = 0;
@@ -45,7 +54,7 @@ int lugx_interptest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             break;
         }
         interp->StartFrame();
-        interp->Run(reinterpret_cast<Gfx*>(dl), mtxReplacements, dlReplacements);
+        interp->Run(reinterpret_cast<Gfx*>(scene.dl), mtxReplacements, dlReplacements);
         interp->EndFrame();
         frames++;
     }

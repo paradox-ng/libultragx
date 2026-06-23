@@ -127,10 +127,17 @@ bool GfxWindowBackendGX::IsFrameReady() {
 void GfxWindowBackendGX::SwapBuffersBegin() {
 }
 
+// DEBUG (temporary): set by DrawTriangles; recolor the clear so we can see
+// whether the interpreter reached the draw path (blue) or not (green).
+extern int g_lugx_draw_calls;
+
 void GfxWindowBackendGX::SwapBuffersEnd() {
     if (!mInitialized) {
         return;
     }
+    GXColor diag = g_lugx_draw_calls > 0 ? (GXColor){ 0x20, 0x40, 0xF0, 0xFF }
+                                         : (GXColor){ 0x1E, 0xDE, 0x1F, 0xFF };
+    GX_SetCopyClear(diag, GX_MAX_Z24);
     GX_CopyDisp(mFrameBuffer[mFbIndex], GX_TRUE);
     GX_DrawDone();
     VIDEO_SetNextFramebuffer(mFrameBuffer[mFbIndex]);

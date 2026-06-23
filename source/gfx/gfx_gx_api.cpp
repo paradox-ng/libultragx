@@ -8,6 +8,7 @@
 #include <ogc/gu.h>
 #include <malloc.h>
 #include <cstring>
+#include <cmath>
 
 namespace Fast {
 
@@ -224,26 +225,33 @@ static inline u8 float_to_u8(float f) {
     return (u8)(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
 
+// DEBUG (temporary): counts DrawTriangles calls so the window backend can show
+// whether the interpreter reached the draw path at all.
+int g_lugx_draw_calls = 0;
+
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     (void)buf_vbo_len;
     if (mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
         return;
     }
+    g_lugx_draw_calls++;
     const CCFeatures& cc = mCurrentShader->features;
 
     // Drive the TEV stage(s) from the decoded combiner + resolved constant colours.
     lugx_tev_from_features(&cc, mCombinerUniforms.inputs);
 
-    // Per-vertex float layout (must mirror Interpreter::GfxSpTri1):
+    // Per-vertex float layout (mirrors Interpreter::GfxSpTri1):
     //   x,y,z,w, mtx_slot, [u,v per used tile], shade(3 rgb | 3 normal)[+1 a]
+    // Derive the stride from the actual buffer length (the interpreter's exact
+    // packing) rather than predicting it - opt_alpha etc. can shift it.
     const int numTex = (cc.usedTextures[0] ? 1 : 0) + (cc.usedTextures[1] ? 1 : 0);
     const bool lighting = cc.opt_lighting;
-    const bool hasShade = cc.opt_shade || lighting;
-    const bool useAlpha = cc.opt_alpha;
-    const int shadeFloats = hasShade ? (lighting ? 3 : (3 + (useAlpha ? 1 : 0))) : 0;
-    const int stride = 5 + 2 * numTex + shadeFloats;
+    const int stride = (int)(buf_vbo_len / (buf_vbo_num_tris * 3));
     const int texOff = 5;
     const int shadeOff = 5 + 2 * numTex;
+    const int shadeFloats = stride - shadeOff;
+    const bool hasShade = shadeFloats >= 3;
+    const bool useAlpha = shadeFloats >= 4;
     // Lighting computes shade on the GPU vertex shader upstream; until HW lighting
     // is wired we only submit a vertex colour for the non-lit shade case.
     const bool submitColor = hasShade && !lighting;
@@ -281,11 +289,24 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     guMtxIdentity(mv);
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
+    (void)slot0;
+#if 1 // DIAGNOSTIC: ignore the interpreter palette, use the known-good piece-5 perspective
+    memset(proj, 0, sizeof(proj));
+    const float dfovy = 60.0f * 3.14159265f / 180.0f;
+    const float dcot = 1.0f / tanf(dfovy * 0.5f);
+    const float dasp = 4.0f / 3.0f, dn = 10.0f, df = 2000.0f;
+    proj[0][0] = dcot / dasp;
+    proj[1][1] = dcot;
+    proj[2][2] = df / (dn - df);
+    proj[2][3] = (dn * df) / (dn - df);
+    proj[3][2] = -1.0f;
+#else
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
-            proj[r][c] = mTransform.mtx_palette[slot0][r][c];
+            proj[r][c] = mTransform.mtx_palette[slot0][c][r]; // N64 convention -> GX transpose
         }
     }
+#endif
     GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
 
     const size_t verts = buf_vbo_num_tris * 3;
@@ -357,7 +378,15 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
 
 void GfxRenderingAPIGX::Init() {
     // GX itself is initialized by the window backend; the interpreter sets render
-    // state per draw. TODO: establish default vertex attribute formats here.
+    // state per draw, but only on CHANGE - so the GX defaults must match the
+    // interpreter's initial RenderingState (cull_keep_sign 0, depth off, no blend),
+    // otherwise GX_Init's own defaults (cull back, z-test on) silently drop the
+    // first frames' geometry.
+    GX_SetCullMode(GX_CULL_NONE);
+    GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+    GX_SetColorUpdate(GX_TRUE);
+    GX_SetAlphaUpdate(GX_TRUE);
+    GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
 }
 
 void GfxRenderingAPIGX::OnResize() {}
