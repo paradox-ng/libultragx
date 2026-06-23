@@ -37,7 +37,14 @@ std::shared_ptr<ResourceInitData> ResourceManager::ReadResourceInitData(const st
     init->ResourceVersion = (int32_t)r->ReadUInt32();
     init->Id = r->ReadUInt64();
     init->Path = filePath;
-    // Reader now sits at offset 20, the start of the payload.
+    // The 20 header fields above are followed by reserved space: the OTR/O2R body
+    // actually begins at OTR_HEADER_SIZE (64), not 20. Factories read from here,
+    // so position the reader at the true payload start. (Display lists survived
+    // the wrong offset only because their decoder skips leading NOPs; the
+    // vertex/light/matrix/texture factories read fixed-size structs and silently
+    // pulled the reserved zero region instead -> zero verts, null lights, etc.)
+    constexpr int32_t kOtrHeaderSize = 64;
+    r->Seek(kOtrHeaderSize, SeekOffsetType::Start);
     return init;
 }
 

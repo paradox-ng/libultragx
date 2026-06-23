@@ -20,15 +20,16 @@
 #include "fast/resource/factory/VertexFactory.h"
 #include "fast/resource/factory/MatrixFactory.h"
 #include "fast/resource/factory/TextureFactory.h"
+#include "fast/resource/factory/LightFactory.h"
 #include "platform/sd.h"
 
-// Flip to 1 to run the loaded DL. With the TextureFactory registered, a real DL
-// (e.g. actors/mario/mario_torso_dl) RENDERS - a small amount of geometry shows
-// on screen (user-confirmed) - but then crashes in the texture-import/decode path
-// (the geometry pipeline works; the texture decode is the blocker). The camera
-// also needs tuning per model (mv[2][3] distance). Next: debug the texture decode
-// (check the OTEX resource version/format) + frame the model.
-#define LUGX_RUN_REAL_DL 0
+// Run the loaded DL. The OTR/O2R body begins at offset 64 (OTR_HEADER_SIZE), not
+// 20; once ResourceManager seeks there, the vertex/light factories read real data
+// (16 verts, a red light) instead of the reserved zero region - which previously
+// collapsed all geometry to a dot and crashed on a null light. mario_torso_dl is
+// F3D, pure lit geometry (no textures, no matrices): we supply the camera via
+// mRsp->MP_matrix directly. Camera distance (mv[2][3]) may need tuning per model.
+#define LUGX_RUN_REAL_DL 1
 
 namespace Fast {
 void GfxSetInstance(std::shared_ptr<Interpreter> gfx);
@@ -75,6 +76,7 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             rm->RegisterResourceFactory(0x4F565458u, std::make_shared<Fast::VertexFactory>());       // OVTX
             rm->RegisterResourceFactory(0x4F4D5458u, std::make_shared<Fast::MatrixFactory>());        // OMTX
             rm->RegisterResourceFactory(0x4F544558u, std::make_shared<Fast::TextureFactory>());       // OTEX
+            rm->RegisterResourceFactory(0x46669697u, std::make_shared<Fast::LightFactory>());         // LGTS
             auto dlRes = rm->LoadResource("actors/mario/mario_torso_dl");
             if (dlRes != nullptr) {
                 dl = (Gfx*)dlRes->GetRawPointer();
@@ -109,12 +111,12 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
         }
         interp->mRendersToFb = false;
         interp->StartFrame();
-        // The DL loads (resource pipeline + hash resolution verified). Running it
-        // is gated until the TextureFactory + ImportTexture path land: the amp DL
-        // sets textures, which currently resolve to null and crash the texture
-        // handler. Flip LUGX_RUN_REAL_DL once textures are wired.
-#ifdef LUGX_RUN_REAL_DL
+#if LUGX_RUN_REAL_DL
         if (dl != nullptr) {
+            // mario_torso_dl is F3D microcode; the interpreter defaults to F3DEX2,
+            // which misreads F3D opcodes (e.g. G_ENDDL 0xB8) and runs off the end
+            // of the DL into garbage. Select the matching handler table first.
+            Fast::gfx_set_target_ucode(ucode_f3d);
             memcpy(interp->mRsp->MP_matrix, mpT, sizeof(mpT)); // DL doesn't set a projection
             interp->Run(dl, mtxRepl, dlRepl);
         }
