@@ -1,4 +1,5 @@
 #include "fast/backends/gfx_gx.h"
+#include "fast/backends/gfx_gx_camera.h"
 #include "fast/cc_features.h"
 
 #include "gfx/gfx_gx_tex.h"
@@ -11,6 +12,22 @@
 #include <cmath>
 
 namespace Fast {
+
+// The GX modelview (affine camera/view) DrawTriangles loads into GX_PNMTX0.
+// Identity by default; a caller (e.g. the standalone DL test, which has no game
+// to set up the camera) provides the view here so the camera-back translation is
+// applied as the modelview rather than folded into the projection. See
+// gfx_gx_camera.h for why that matters.
+static float sGxViewMtx[4][4] = {
+    { 1.0f, 0.0f, 0.0f, 0.0f },
+    { 0.0f, 1.0f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, 1.0f, 0.0f },
+    { 0.0f, 0.0f, 0.0f, 1.0f },
+};
+
+void lugx_gx_set_view_matrix(const float m[4][4]) {
+    memcpy(sGxViewMtx, m, sizeof(sGxViewMtx));
+}
 
 // What a "shader" is for the GX backend: the N64 combiner decoded from the 64-bit
 // shader ids (which encode the RDP combine state), kept as the full CCFeatures so
@@ -291,7 +308,11 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         slot0 = 0;
     }
     Mtx mv;
-    guMtxIdentity(mv);
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            mv[r][c] = sGxViewMtx[r][c];
+        }
+    }
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
     // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),

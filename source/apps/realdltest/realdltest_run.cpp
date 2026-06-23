@@ -21,6 +21,7 @@
 #include "fast/resource/factory/MatrixFactory.h"
 #include "fast/resource/factory/TextureFactory.h"
 #include "fast/resource/factory/LightFactory.h"
+#include "fast/backends/gfx_gx_camera.h"
 #include "platform/sd.h"
 
 // Run the loaded DL. The OTR/O2R body begins at offset 64 (OTR_HEADER_SIZE), not
@@ -64,6 +65,10 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
     // than exiting the .dol (which returns the console to the system menu).
     auto interp = std::make_shared<Fast::Interpreter>();
     Fast::GfxSetInstance(interp);
+    // Run() calls mGfxDebugger->IsDebugging() once per DL command. Without an
+    // instance it derefs null - benign on Dolphin (returns 0, but logged 100k+
+    // times so it crawls) and a hard crash on real hardware. Give it a real one.
+    interp->SetGfxDebugger(std::make_shared<Fast::GfxDebugger>());
     interp->Init(wapi, rapi, "realdltest", false, 640, 480, 0, 0);
 
     Gfx* dl = nullptr;
@@ -90,17 +95,22 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
     const float fovy = 60.0f * 3.14159265f / 180.0f;
     const float cot = 1.0f / tanf(fovy * 0.5f);
     const float asp = 4.0f / 3.0f, n = 10.0f, f = 50000.0f;
-    float persp[4][4], mv[4][4], mvp[4][4], mpT[4][4];
+    float persp[4][4], mv[4][4], mpT[4][4];
     memset(persp, 0, sizeof(persp));
     persp[0][0] = cot / asp;
     persp[1][1] = cot;
     persp[2][2] = -(f + n) / (f - n);
     persp[2][3] = -2.0f * f * n / (f - n);
     persp[3][2] = -1.0f;
+    // Pure perspective into MP (NO view folded in): GX_LoadProjectionMtx ignores a
+    // W-row translation, so a baked-in camera-back push would make GX compute
+    // W=-z in object space and flip sign across the model. Supply the camera-back
+    // as the GX modelview instead (applied before the projection).
+    mat_transpose(mpT, persp);
     mat_identity(mv);
-    mv[2][3] = -400.0f; // push the model back (ITERATE)
-    mat_mul(mvp, persp, mv);
-    mat_transpose(mpT, mvp);
+    mv[2][3] = -400.0f; // GX modelview: push the model away from the camera (ITERATE)
+    Fast::lugx_gx_set_view_matrix(mv);
+    (void)mat_mul;
 
     std::unordered_map<Mtx*, MtxF> mtxRepl;
     std::unordered_map<Gfx*, Gfx*> dlRepl;
