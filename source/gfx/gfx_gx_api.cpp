@@ -264,6 +264,16 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
         GX_SetNumTexGens(1);
         GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+        // Bind the texture currently selected on tile 0 to GX_TEXMAP0.
+        uint32_t tid = mTileTexture[0];
+        if (tid < mTextures.size() && mTextures[tid].data != nullptr) {
+            GxTexture& t = mTextures[tid];
+            GXTexObj obj;
+            GX_InitTexObj(&obj, t.data, (u16)t.width, (u16)t.height, GX_TF_RGBA8, t.wrapS, t.wrapT, GX_FALSE);
+            u8 filt = t.linearFilter ? GX_LINEAR : GX_NEAR;
+            GX_InitTexObjFilterMode(&obj, filt, filt);
+            GX_LoadTexObj(&obj, GX_TEXMAP0);
+        }
     } else {
         GX_SetNumTexGens(0);
     }
@@ -305,31 +315,55 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
                         float_to_u8(v[shadeOff + 2]), a);
         }
         if (numTex > 0) {
-            GX_TexCoord2f32(v[texOff + 0], v[texOff + 1]);
+            // Apply the per-draw UV transform (raw RSP texcoord -> normalized GX
+            // texcoord): uv = raw * scale + offset (CombinerUniforms.uv_transform).
+            const float* uvt = mCombinerUniforms.uv_transform[0];
+            float us = v[texOff + 0] * uvt[0] + uvt[1];
+            float vt = v[texOff + 1] * uvt[2] + uvt[3];
+            GX_TexCoord2f32(us, vt);
         }
     }
     GX_End();
 }
 
 void GfxRenderingAPIGX::DrawBringupTriangle() {
-    // A shade-only combiner: color = shade, alpha = shade alpha
-    // ((A-B)*C+D with A=B=C=0, D=SHADE -> output is the per-vertex shade).
-    CCFeatures cc{};
-    cc.opt_shade = true;
-    cc.opt_alpha = true;
-    cc.c[0][0][0] = SHADER_0; cc.c[0][0][1] = SHADER_0; cc.c[0][0][2] = SHADER_0; cc.c[0][0][3] = SHADER_INPUT_7;
-    cc.c[0][1][0] = SHADER_0; cc.c[0][1][1] = SHADER_0; cc.c[0][1][2] = SHADER_0; cc.c[0][1][3] = SHADER_INPUT_7;
+    // Texture bring-up: a DECAL combiner (output = TEXEL0) over a 16x16 RGBA32
+    // checkerboard, to validate the GX texture upload + bind + texcoord path.
+    static uint8_t checker[16 * 16 * 4];
+    static uint32_t texId = 0xFFFFFFFF;
+    if (texId == 0xFFFFFFFF) {
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                bool dark = (((x / 4) + (y / 4)) & 1) != 0;
+                uint8_t* p = &checker[(y * 16 + x) * 4];
+                p[0] = 255;             // R
+                p[1] = dark ? 0 : 255;  // G  -> red / white
+                p[2] = dark ? 0 : 255;  // B
+                p[3] = 255;             // A
+            }
+        }
+        texId = NewTexture();
+        SelectTexture(0, texId);
+        UploadTexture(checker, 16, 16);
+        SetSamplerParameters(0, false, 2 /*clamp*/, 2 /*clamp*/);
+    }
+    SelectTexture(0, texId);
 
+    // output = TEXEL0 ((A-B)*C+D with A=B=C=0, D=TEXEL0).
+    CCFeatures cc{};
+    cc.usedTextures[0] = true;
+    cc.c[0][0][0] = SHADER_0; cc.c[0][0][1] = SHADER_0; cc.c[0][0][2] = SHADER_0; cc.c[0][0][3] = SHADER_TEXEL0;
+    cc.c[0][1][0] = SHADER_0; cc.c[0][1][1] = SHADER_0; cc.c[0][1][2] = SHADER_0; cc.c[0][1][3] = SHADER_1;
     static ShaderProgram testShader;
     testShader.features = cc;
     mCurrentShader = &testShader;
 
-    CombinerUniforms zero{};
-    SetCombinerUniforms(zero);
+    // Identity UV transform: the vbo texcoords below are already normalized [0,1].
+    CombinerUniforms cu{};
+    cu.uv_transform[0][0] = 1.0f; // scaleS
+    cu.uv_transform[0][2] = 1.0f; // scaleT
+    SetCombinerUniforms(cu);
 
-    // Real perspective MVP in palette slot 0 (camera at origin looking down -z;
-    // the triangle below sits at z = -2.5, in front). Stored in GX row-major
-    // convention; DrawTriangles loads it directly as the GX projection.
     Mtx44 persp;
     guPerspective(persp, 60.0f, 4.0f / 3.0f, 0.1f, 50.0f);
     TransformUniforms t{};
@@ -341,22 +375,19 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
     t.y_scale[0] = 1.0f;
     SetTransformUniforms(t);
 
-    // Flat unlit render state.
     GX_SetCullMode(GX_CULL_NONE);
     GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
     GX_SetColorUpdate(GX_TRUE);
     GX_SetAlphaUpdate(GX_TRUE);
     GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
 
-    // One triangle, vbo stride 9: [x,y,z,w, mtx_slot, r,g,b,a]. Object-space
-    // positions in front of the camera (z=-2.5); distinct per-vertex colours
-    // (red/green/blue) for a visible Gouraud blend transformed by the perspective.
-    static float tri[3 * 9] = {
-         0.0f,  1.0f, -2.5f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f, // top    red
-        -1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f, // bottom-left  green
-         1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f, // bottom-right blue
+    // vbo stride 7: [x,y,z,w, mtx_slot, u, v]; texcoords span the texture.
+    static float tri[3 * 7] = {
+         0.0f,  1.0f, -2.5f, 1.0f, 0.0f,  0.5f, 0.0f, // top
+        -1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  0.0f, 1.0f, // bottom-left
+         1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  1.0f, 1.0f, // bottom-right
     };
-    DrawTriangles(tri, 3 * 9, 1);
+    DrawTriangles(tri, 3 * 7, 1);
 }
 
 // --- frame lifecycle -----------------------------------------------------------
