@@ -54,6 +54,8 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
 
     // Stores the resolved combiner constant colours for the next DrawTriangles.
     void SetCombinerUniforms(const CombinerUniforms& uniforms) override;
+    // Stores the matrix palette (combined MVP per slot) for the next DrawTriangles.
+    void SetTransformUniforms(const TransformUniforms& uniforms) override;
 
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
 
@@ -102,6 +104,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     ShaderProgram* mCurrentShader = nullptr;
     std::unordered_map<uint64_t, ShaderProgram*> mShaderCache; // keyed by shaderId0 (id1 folded in)
     CombinerUniforms mCombinerUniforms{}; // latest resolved constants (prim/env/...)
+    TransformUniforms mTransform{};       // latest matrix palette (combined MVP per slot)
 };
 
 // Factory used by the window backend to create the GX rendering backend.

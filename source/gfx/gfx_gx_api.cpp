@@ -213,6 +213,10 @@ void GfxRenderingAPIGX::SetCombinerUniforms(const CombinerUniforms& uniforms) {
     mCombinerUniforms = uniforms;
 }
 
+void GfxRenderingAPIGX::SetTransformUniforms(const TransformUniforms& uniforms) {
+    mTransform = uniforms;
+}
+
 // --- draw ----------------------------------------------------------------------
 
 static inline u8 float_to_u8(float f) {
@@ -261,17 +265,28 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         GX_SetNumTexGens(0);
     }
 
-    // Bring-up transform (piece 4): identity model-view + an NDC pass-through
-    // orthographic projection, so vertices given in [-1,1] clip space render
-    // directly. The interpreter's real positions are object-space and need the
-    // matrix-palette path (piece 5: GX matrix memory + PNMTXIDX + projection).
+    // GX T&L matrix path (piece 5): the vbo carries object-space positions and a
+    // matrix-palette slot. The interpreter's mtx_palette[slot] is the combined MVP
+    // (perspective baked in). GX has no per-vertex projection, so for now we load
+    // the slot's MVP as the single GX projection (perspective-correct for batches
+    // that use one matrix) with identity model-view; the per-vertex PNMTXIDX +
+    // model-view/projection split is the follow-up for multi-matrix batches.
+    // TODO: the interpreter's palette convention is GX's transpose; confirm the
+    // exact transpose against real interpreter geometry (loaded direct for now).
+    int slot0 = (int)buf_vbo[4]; // mtx_slot of the first vertex
+    if (slot0 < 0 || slot0 >= GFX_MTX_PALETTE_SIZE) {
+        slot0 = 0;
+    }
     Mtx mv;
     guMtxIdentity(mv);
-    guMtxTransApply(mv, mv, 0.0f, 0.0f, -1.0f); // push z within [near,far]
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
-    guOrtho(proj, 1.0f, -1.0f, -1.0f, 1.0f, 0.1f, 10.0f); // top,bottom,left,right,near,far
-    GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            proj[r][c] = mTransform.mtx_palette[slot0][r][c];
+        }
+    }
+    GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
 
     const size_t verts = buf_vbo_num_tris * 3;
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
@@ -306,6 +321,20 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
     CombinerUniforms zero{};
     SetCombinerUniforms(zero);
 
+    // Real perspective MVP in palette slot 0 (camera at origin looking down -z;
+    // the triangle below sits at z = -2.5, in front). Stored in GX row-major
+    // convention; DrawTriangles loads it directly as the GX projection.
+    Mtx44 persp;
+    guPerspective(persp, 60.0f, 4.0f / 3.0f, 0.1f, 50.0f);
+    TransformUniforms t{};
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            t.mtx_palette[0][r][c] = persp[r][c];
+        }
+    }
+    t.y_scale[0] = 1.0f;
+    SetTransformUniforms(t);
+
     // Flat unlit render state.
     GX_SetCullMode(GX_CULL_NONE);
     GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
@@ -313,12 +342,13 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
     GX_SetAlphaUpdate(GX_TRUE);
     GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
 
-    // One triangle, vbo stride 9: [x,y,z,w, mtx_slot, r,g,b,a], NDC positions,
-    // distinct per-vertex colours (red/green/blue) for a visible Gouraud blend.
+    // One triangle, vbo stride 9: [x,y,z,w, mtx_slot, r,g,b,a]. Object-space
+    // positions in front of the camera (z=-2.5); distinct per-vertex colours
+    // (red/green/blue) for a visible Gouraud blend transformed by the perspective.
     static float tri[3 * 9] = {
-         0.0f,  0.6f, 0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f, // top    red
-        -0.6f, -0.6f, 0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f, // bottom-left  green
-         0.6f, -0.6f, 0.0f, 1.0f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f, // bottom-right blue
+         0.0f,  1.0f, -2.5f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f, // top    red
+        -1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f, // bottom-left  green
+         1.0f, -1.0f, -2.5f, 1.0f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f, // bottom-right blue
     };
     DrawTriangles(tri, 3 * 9, 1);
 }
