@@ -19,7 +19,16 @@
 #include "fast/resource/factory/DisplayListFactory.h"
 #include "fast/resource/factory/VertexFactory.h"
 #include "fast/resource/factory/MatrixFactory.h"
+#include "fast/resource/factory/TextureFactory.h"
 #include "platform/sd.h"
+
+// Flip to 1 to run the loaded DL. With the TextureFactory registered, a real DL
+// (e.g. actors/mario/mario_torso_dl) RENDERS - a small amount of geometry shows
+// on screen (user-confirmed) - but then crashes in the texture-import/decode path
+// (the geometry pipeline works; the texture decode is the blocker). The camera
+// also needs tuning per model (mv[2][3] distance). Next: debug the texture decode
+// (check the OTEX resource version/format) + frame the model.
+#define LUGX_RUN_REAL_DL 0
 
 namespace Fast {
 void GfxSetInstance(std::shared_ptr<Interpreter> gfx);
@@ -65,7 +74,8 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             rm->RegisterResourceFactory(0x4F444C54u, std::make_shared<Fast::DisplayListFactory>()); // ODLT
             rm->RegisterResourceFactory(0x4F565458u, std::make_shared<Fast::VertexFactory>());       // OVTX
             rm->RegisterResourceFactory(0x4F4D5458u, std::make_shared<Fast::MatrixFactory>());        // OMTX
-            auto dlRes = rm->LoadResource("actors/amp/amp_electricity_dl");
+            rm->RegisterResourceFactory(0x4F544558u, std::make_shared<Fast::TextureFactory>());       // OTEX
+            auto dlRes = rm->LoadResource("actors/mario/mario_torso_dl");
             if (dlRes != nullptr) {
                 dl = (Gfx*)dlRes->GetRawPointer();
             }
@@ -86,7 +96,7 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
     persp[2][3] = -2.0f * f * n / (f - n);
     persp[3][2] = -1.0f;
     mat_identity(mv);
-    mv[2][3] = -3000.0f; // push the model back (ITERATE)
+    mv[2][3] = -400.0f; // push the model back (ITERATE)
     mat_mul(mvp, persp, mv);
     mat_transpose(mpT, mvp);
 
