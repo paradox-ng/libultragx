@@ -1,0 +1,19 @@
+#pragma once
+
+#include <memory>
+#include <string>
+
+#include "ship/resource/File.h"
+
+namespace Ship {
+
+// Abstract archive: produces a File (raw bytes + a reader) for a named entry.
+// The concrete implementation is O2rArchive (a ZIP-format .otr/.o2r).
+class Archive {
+  public:
+    virtual ~Archive() = default;
+    virtual bool HasFile(const std::string& filePath) = 0;
+    virtual std::shared_ptr<File> LoadFile(const std::string& filePath) = 0;
+};
+
+} // namespace Ship
