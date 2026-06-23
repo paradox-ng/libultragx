@@ -1,0 +1,7 @@
+[submodule "extern/prism"]
+	path = extern/prism
+	url = https://github.com/paradox-ng/prism-processor.git
+[submodule "extern/json"]
+	path = extern/json
+	url = https://github.com/nlohmann/json.git
+	shallow = true
