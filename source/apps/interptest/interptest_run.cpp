@@ -54,6 +54,10 @@ int lugx_interptest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             break;
         }
         interp->StartFrame();
+        // We render direct to the EFB (framebuffers are stubbed), so keep the
+        // interpreter on the direct-to-screen path instead of its render-to-
+        // texture present (which our stubs cannot present).
+        interp->mRendersToFb = false;
         interp->Run(reinterpret_cast<Gfx*>(scene.dl), mtxReplacements, dlReplacements);
         interp->EndFrame();
         frames++;

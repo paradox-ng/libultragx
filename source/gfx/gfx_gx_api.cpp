@@ -225,16 +225,11 @@ static inline u8 float_to_u8(float f) {
     return (u8)(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
 
-// DEBUG (temporary): counts DrawTriangles calls so the window backend can show
-// whether the interpreter reached the draw path at all.
-int g_lugx_draw_calls = 0;
-
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     (void)buf_vbo_len;
     if (mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
         return;
     }
-    g_lugx_draw_calls++;
     const CCFeatures& cc = mCurrentShader->features;
 
     // Drive the TEV stage(s) from the decoded combiner + resolved constant colours.
@@ -290,16 +285,9 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
     (void)slot0;
-#if 1 // DIAGNOSTIC: ignore the interpreter palette, use the known-good piece-5 perspective
-    memset(proj, 0, sizeof(proj));
-    const float dfovy = 60.0f * 3.14159265f / 180.0f;
-    const float dcot = 1.0f / tanf(dfovy * 0.5f);
-    const float dasp = 4.0f / 3.0f, dn = 10.0f, df = 2000.0f;
-    proj[0][0] = dcot / dasp;
-    proj[1][1] = dcot;
-    proj[2][2] = df / (dn - df);
-    proj[2][3] = (dn * df) / (dn - df);
-    proj[3][2] = -1.0f;
+#if 1 // DIAGNOSTIC: ignore the interpreter palette; libogc guPerspective gives the
+      // correct GX z-convention (a hand-rolled GL-style matrix z-clips on GX).
+    guPerspective(proj, 60.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
 #else
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
