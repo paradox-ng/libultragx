@@ -1,0 +1,176 @@
+#include "fast/backends/gfx_gx_window.h"
+
+#include <gccore.h>
+#include <ogcsys.h>
+#include <ogc/lwp_watchdog.h> // gettime / ticks_to_microsecs
+#include <malloc.h>
+#include <string.h>
+#ifdef HW_RVL
+#include <wiiuse/wpad.h>
+#endif
+
+namespace Fast {
+
+#define LUGX_FIFO_SIZE (256 * 1024)
+
+void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/, bool /*startFullScreen*/,
+                              uint32_t width, uint32_t height, int32_t /*posX*/, int32_t /*posY*/) {
+    if (mInitialized) {
+        return;
+    }
+
+    VIDEO_Init();
+    PAD_Init();
+#ifdef HW_RVL
+    WPAD_Init();
+#endif
+
+    GXRModeObj* rmode = VIDEO_GetPreferredMode(NULL);
+    mRmode = rmode;
+    mWidth = width != 0 ? width : (uint32_t)rmode->fbWidth;
+    mHeight = height != 0 ? height : (uint32_t)rmode->efbHeight;
+
+    mFrameBuffer[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    mFrameBuffer[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    VIDEO_Configure(rmode);
+    VIDEO_SetNextFramebuffer(mFrameBuffer[0]);
+    VIDEO_SetBlack(FALSE);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (rmode->viTVMode & VI_NON_INTERLACE) {
+        VIDEO_WaitVSync();
+    }
+
+    mFifo = memalign(32, LUGX_FIFO_SIZE);
+    memset(mFifo, 0, LUGX_FIFO_SIZE);
+    GX_Init(mFifo, LUGX_FIFO_SIZE);
+
+    // Bring-up milestone: clear to the libultragx pass-green so a completed
+    // interpreter frame is visibly distinguishable. The rendering backend will
+    // own the clear colour once ClearFramebuffer/fills are wired.
+    GXColor green = { 0x1E, 0xDE, 0x1F, 0xFF };
+    GX_SetCopyClear(green, GX_MAX_Z24);
+    GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
+    GX_SetDispCopySrc(0, 0, rmode->fbWidth, rmode->efbHeight);
+    GX_SetDispCopyDst(rmode->fbWidth, GX_SetDispCopyYScale(GX_GetYScaleFactor(rmode->efbHeight, rmode->xfbHeight)));
+    GX_SetCopyFilter(rmode->aa, rmode->sample_pattern, GX_TRUE, rmode->vfilter);
+    GX_SetPixelFmt(GX_PF_RGB8_Z24, GX_ZC_LINEAR);
+
+    mStartTicks = gettime();
+    mInitialized = true;
+}
+
+void GfxWindowBackendGX::Close() {
+}
+
+void GfxWindowBackendGX::SetKeyboardCallbacks(bool (*)(int), bool (*)(int), void (*)()) {
+}
+void GfxWindowBackendGX::SetMouseCallbacks(bool (*)(int), bool (*)(int)) {
+}
+void GfxWindowBackendGX::SetFullscreenChangedCallback(void (*)(bool)) {
+}
+void GfxWindowBackendGX::SetFullscreen(bool) {
+}
+void GfxWindowBackendGX::GetActiveWindowRefreshRate(uint32_t* refreshRate) {
+    if (refreshRate) {
+        *refreshRate = 60;
+    }
+}
+void GfxWindowBackendGX::SetCursorVisibility(bool) {
+}
+void GfxWindowBackendGX::SetMousePos(int32_t, int32_t) {
+}
+void GfxWindowBackendGX::GetMousePos(int32_t* x, int32_t* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+void GfxWindowBackendGX::GetMouseDelta(int32_t* x, int32_t* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+void GfxWindowBackendGX::GetMouseWheel(float* x, float* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+bool GfxWindowBackendGX::GetMouseState(uint32_t) {
+    return false;
+}
+void GfxWindowBackendGX::SetMouseCapture(bool) {
+}
+bool GfxWindowBackendGX::IsMouseCaptured() {
+    return false;
+}
+
+void GfxWindowBackendGX::GetDimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
+    if (width) *width = mWidth;
+    if (height) *height = mHeight;
+    if (posX) *posX = 0;
+    if (posY) *posY = 0;
+}
+void GfxWindowBackendGX::SetDimensions(uint32_t, uint32_t, int32_t, int32_t) {
+}
+Ship::WindowRect GfxWindowBackendGX::GetPrimaryMonitorRect() {
+    return { 0, 0, (int32_t)mWidth, (int32_t)mHeight };
+}
+
+void GfxWindowBackendGX::HandleEvents() {
+    PAD_ScanPads();
+#ifdef HW_RVL
+    WPAD_ScanPads();
+#endif
+}
+
+bool GfxWindowBackendGX::IsFrameReady() {
+    return true;
+}
+
+void GfxWindowBackendGX::SwapBuffersBegin() {
+}
+
+void GfxWindowBackendGX::SwapBuffersEnd() {
+    if (!mInitialized) {
+        return;
+    }
+    GX_CopyDisp(mFrameBuffer[mFbIndex], GX_TRUE);
+    GX_DrawDone();
+    VIDEO_SetNextFramebuffer(mFrameBuffer[mFbIndex]);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    mFbIndex ^= 1;
+}
+
+double GfxWindowBackendGX::GetTime() {
+    if (!mInitialized) {
+        return 0.0;
+    }
+    return (double)ticks_to_microsecs(gettime() - mStartTicks) / 1000000.0;
+}
+
+int GfxWindowBackendGX::GetTargetFps() {
+    return (int)mTargetFps;
+}
+void GfxWindowBackendGX::SetTargetFps(int fps) {
+    mTargetFps = (uint32_t)fps;
+}
+void GfxWindowBackendGX::SetMaxFrameLatency(int) {
+}
+const char* GfxWindowBackendGX::GetKeyName(int) {
+    return "";
+}
+bool GfxWindowBackendGX::CanDisableVsync() {
+    return false; // VI is vsync-locked on console
+}
+bool GfxWindowBackendGX::IsRunning() {
+    return mIsRunning;
+}
+void GfxWindowBackendGX::Destroy() {
+}
+bool GfxWindowBackendGX::IsFullscreen() {
+    return true; // always fullscreen on console
+}
+
+GfxWindowBackend* lugx_create_gx_window_backend() {
+    return new GfxWindowBackendGX();
+}
+
+} // namespace Fast
