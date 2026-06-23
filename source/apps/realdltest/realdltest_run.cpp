@@ -133,6 +133,14 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             // per-vertex shade colour, so the geometry shows in colour. Survives
             // Run()'s SpReset (which doesn't touch combine_mode).
             interp->mRdp->combine_mode = 0x08008000ULL;
+            // Enable hardware lighting: G_LIGHTING makes the interpreter pack the
+            // per-vertex NORMAL into the shade slot and emit LightingUniforms (the
+            // red light the DL loaded); the GX backend then lights it. G_SHADE for
+            // smooth shading. The DL sets neither (the game does).
+            interp->mRsp->geometry_mode |= 0x00020000u | 0x00000004u; // G_LIGHTING | G_SHADE
+            // Identity modelview[0]: the interpreter transforms normals + light
+            // directions by it (lighting space). Position uses MP_matrix, not this.
+            mat_identity(interp->mRsp->modelview_matrix_stack[0]);
             memcpy(interp->mRsp->MP_matrix, mpT, sizeof(mpT)); // DL doesn't set a projection
             interp->Run(dl, mtxRepl, dlRepl);
         }

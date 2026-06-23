@@ -235,6 +235,10 @@ void GfxRenderingAPIGX::SetTransformUniforms(const TransformUniforms& uniforms) 
     mTransform = uniforms;
 }
 
+void GfxRenderingAPIGX::SetLightingUniforms(const LightingUniforms& uniforms) {
+    mLighting = uniforms;
+}
+
 // --- draw ----------------------------------------------------------------------
 
 static inline u8 float_to_u8(float f) {
@@ -264,14 +268,20 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     const int shadeFloats = stride - shadeOff;
     const bool hasShade = shadeFloats >= 3;
     const bool useAlpha = shadeFloats >= 4;
-    // Lighting computes shade on the GPU vertex shader upstream; until HW lighting
-    // is wired we only submit a vertex colour for the non-lit shade case.
+    // When the combiner uses shade and lighting is on, the vbo's shade slot holds the
+    // object-space NORMAL (per-vertex) and GX computes the lit colour in hardware;
+    // otherwise the shade slot is a vertex colour we submit directly.
+    const bool submitNormal = hasShade && lighting;
     const bool submitColor = hasShade && !lighting;
 
-    // Vertex descriptor / format. Submission order is fixed: POS, CLR0, TEX0.
+    // Vertex descriptor / format. Submission order is fixed: POS, NRM, CLR0, TEX0.
     GX_ClearVtxDesc();
     GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    if (submitNormal) {
+        GX_SetVtxDesc(GX_VA_NRM, GX_DIRECT);
+        GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_NRM, GX_NRM_XYZ, GX_F32, 0);
+    }
     if (submitColor) {
         GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
         GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
@@ -330,11 +340,56 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     }
     GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
 
+    // Lighting channel. N64 lit shade = matWhite * (ambient + sum_i lightCol_i *
+    // max(0, N . dirToLight_i)). GX gives exactly that with GX_DF_CLAMP + GX_AF_NONE,
+    // material/ambient from the registers. The interpreter already transformed each
+    // light direction into the normal's space (CalculateNormalDir via the modelview).
+    if (submitNormal) {
+        // Normal matrix = inverse-transpose of the modelview 3x3; our modelview is a
+        // pure translation (the view), so its 3x3 is identity -> normal matrix identity.
+        Mtx nrmMtx;
+        guMtxIdentity(nrmMtx);
+        GX_LoadNrmMtxImm(nrmMtx, GX_PNMTX0);
+
+        int nl = mLighting.num_lights;
+        if (nl > 8) {
+            nl = 8; // GX has 8 hardware lights
+        }
+        u32 lightmask = 0;
+        for (int i = 0; i < nl; i++) {
+            GXLightObj lobj;
+            GXColor lc = { float_to_u8(mLighting.lights[i][0][0]), float_to_u8(mLighting.lights[i][0][1]),
+                           float_to_u8(mLighting.lights[i][0][2]), 255 };
+            GX_InitLightColor(&lobj, lc);
+            // Place the light far along the direction-to-light so GX's light vector
+            // L = normalize(pos - vtx) ~= that direction; diffuse = clamp(N . L).
+            const float kFar = 1.0e6f;
+            GX_InitLightPos(&lobj, mLighting.lights[i][1][0] * kFar, mLighting.lights[i][1][1] * kFar,
+                            mLighting.lights[i][1][2] * kFar);
+            GX_LoadLightObj(&lobj, GX_LIGHT0 << i);
+            lightmask |= (u32)(GX_LIGHT0 << i);
+        }
+        GXColor amb = { float_to_u8(mLighting.ambient[0]), float_to_u8(mLighting.ambient[1]),
+                        float_to_u8(mLighting.ambient[2]), 255 };
+        GXColor matWhite = { 255, 255, 255, 255 };
+        GX_SetNumChans(1);
+        GX_SetChanAmbColor(GX_COLOR0A0, amb);
+        GX_SetChanMatColor(GX_COLOR0A0, matWhite);
+        GX_SetChanCtrl(GX_COLOR0A0, GX_ENABLE, GX_SRC_REG, GX_SRC_REG, lightmask, GX_DF_CLAMP, GX_AF_NONE);
+    } else {
+        // Pass the vertex colour (or the constant material) straight to the rasteriser.
+        GX_SetNumChans(1);
+        GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_VTX, GX_SRC_VTX, 0, GX_DF_NONE, GX_AF_NONE);
+    }
+
     const size_t verts = buf_vbo_num_tris * 3;
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
     for (size_t i = 0; i < verts; i++) {
         const float* v = &buf_vbo[i * (size_t)stride];
         GX_Position3f32(v[0], v[1], v[2]);
+        if (submitNormal) {
+            GX_Normal3f32(v[shadeOff + 0], v[shadeOff + 1], v[shadeOff + 2]);
+        }
         if (submitColor) {
             u8 a = useAlpha ? float_to_u8(v[shadeOff + 3]) : 255;
             GX_Color4u8(float_to_u8(v[shadeOff + 0]), float_to_u8(v[shadeOff + 1]),
