@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include "ship/resource/File.h"
 
@@ -11,6 +12,10 @@ class ResourceManager;
 // payload pointer/size; typed resources derive via Resource<T>.
 class IResource {
   public:
+    // Path prefix marking an "alternate assets" override (HD texture packs etc.).
+    // Adopted from libultraship so the Fast3D interpreter's path handling matches.
+    inline static const std::string gAltAssetPrefix = "alt/";
+
     IResource() = default;
     IResource(std::shared_ptr<ResourceInitData> initData);
     virtual ~IResource();

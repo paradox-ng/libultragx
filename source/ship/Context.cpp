@@ -1,10 +1,31 @@
 #include "ship/Context.h"
 
 #include "platform/paths.h"
+#include "ship/resource/ResourceManager.h"
+#include "ship/config/ConsoleVariable.h"
 
 #include <sys/stat.h>
 
 namespace Ship {
+
+std::shared_ptr<Context> Context::GetInstance() {
+    static std::shared_ptr<Context> sInstance = std::make_shared<Context>();
+    return sInstance;
+}
+
+std::shared_ptr<ResourceManager> Context::GetResourceManager() {
+    if (mResourceManager == nullptr) {
+        mResourceManager = std::make_shared<ResourceManager>();
+    }
+    return mResourceManager;
+}
+
+std::shared_ptr<ConsoleVariable> Context::GetConsoleVariables() {
+    if (mConsoleVariables == nullptr) {
+        mConsoleVariables = std::make_shared<ConsoleVariable>();
+    }
+    return mConsoleVariables;
+}
 
 // Resolved once at startup from argv[0]; e.g. "sd:/Ghostship/". Always carries a
 // trailing slash (lugx_resolve_base_dir guarantees it).

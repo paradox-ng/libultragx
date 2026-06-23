@@ -14,6 +14,13 @@ class Archive {
     virtual ~Archive() = default;
     virtual bool HasFile(const std::string& filePath) = 0;
     virtual std::shared_ptr<File> LoadFile(const std::string& filePath) = 0;
+
+    // On-disk path of this archive (e.g. "sd:/sm64.o2r"). Set by the concrete
+    // archive when it opens; used for shader-pack manifest naming.
+    const std::string& GetPath() const { return mPath; }
+
+  protected:
+    std::string mPath;
 };
 
 } // namespace Ship

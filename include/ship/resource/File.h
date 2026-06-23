@@ -33,6 +33,7 @@ struct File {
     std::shared_ptr<std::vector<char>> Buffer;
     std::shared_ptr<BinaryReader> Reader;
     std::shared_ptr<ResourceInitData> InitData;
+    bool IsLoaded = false;
 };
 
 } // namespace Ship

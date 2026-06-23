@@ -41,7 +41,8 @@ TARGET		:=	libultragx-$(PLATFORM)
 BUILD		:=	build_$(PLATFORM)
 SOURCES		:=	source/apps/$(APP) source/platform source/ship source/config source/bridge \
 				source/log source/utils/binarytools source/window/gui source/debug source/gfx \
-				source/ship/resource source/ship/resource/archive source/fast/resource \
+				source/ship/resource source/ship/resource/archive \
+				source/fast source/fast/resource source/fast/debug \
 				extern/prism/src/prism extern/prism/src/prism/utils
 DATA		:=	data
 INCLUDES	:=	source include \
@@ -50,7 +51,10 @@ INCLUDES	:=	source include \
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
-CFLAGS		=	-g -O2 -Wall -DIS_BIGENDIAN $(MACHDEP) $(INCLUDE)
+# CVar name strings the adopted Fast3D interpreter expects as compile defines
+# (libultraship sets these via cmake/cvars.cmake; we mirror the two it uses).
+CVAR_DEFS	=	-DCVAR_INTERNAL_RESOLUTION='"gInternalResolution"' -DCVAR_MSAA_VALUE='"gMSAAValue"'
+CFLAGS		=	-g -O2 -Wall -DIS_BIGENDIAN $(CVAR_DEFS) $(MACHDEP) $(INCLUDE)
 CXXFLAGS	=	$(CFLAGS)
 LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
@@ -108,6 +112,7 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-iquote $(CURDIR)/$(dir)) \
 					-I$(CURDIR)/include \
 					-I$(CURDIR)/include/libultraship \
 					-I$(CURDIR)/extern/json/single_include \
+					-I$(CURDIR)/extern/prism/src \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 					-I$(CURDIR)/$(BUILD) \
 					-I$(LIBOGC_INC)

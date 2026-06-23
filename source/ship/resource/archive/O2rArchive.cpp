@@ -10,6 +10,7 @@ O2rArchive::O2rArchive() : mZip(std::make_unique<ZipArchive>()) {
 O2rArchive::~O2rArchive() = default;
 
 bool O2rArchive::Open(const std::string& path) {
+    mPath = path;
     return mZip->Open(path);
 }
 
@@ -32,6 +33,7 @@ std::shared_ptr<File> O2rArchive::LoadFile(const std::string& filePath) {
         reinterpret_cast<const char*>(bytes.data()),
         reinterpret_cast<const char*>(bytes.data()) + bytes.size());
     file->Reader = std::make_shared<BinaryReader>(file->Buffer->data(), file->Buffer->size());
+    file->IsLoaded = true;
     // InitData is parsed by the ResourceManager (the header layout is not an
     // archive concern). Leave it null here.
     return file;

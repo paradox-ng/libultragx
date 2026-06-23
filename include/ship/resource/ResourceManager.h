@@ -29,6 +29,17 @@ class ResourceManager {
     std::shared_ptr<IResource> GetCachedResource(const std::string& filePath);
     std::shared_ptr<IResource> LoadResource(const std::string& filePath);
 
+    // libultraship-compatible surface the Fast3D interpreter calls. Process =
+    // load (our loader is already synchronous, so it is a thin alias). The
+    // raw-pointer helpers load (if needed) and hand back the typed payload.
+    std::shared_ptr<IResource> LoadResourceProcess(const std::string& filePath);
+    void* GetResourceRawPointer(const std::string& name);
+    void* GetResourceRawPointer(uint64_t crc);
+    void* GetResourceRawPointer(std::shared_ptr<IResource> resource);
+    // OTR magic-signature check. Real archives carry a signature; stubbed until
+    // that path is needed (returns false = "not a raw OTR pointer").
+    bool OtrSignatureCheck(const char* fileName);
+
   private:
     // Parse the resource header at the front of `file` (sets ByteOrder/Type/
     // Version/Id/Path), configure the reader's endianness, and leave the reader

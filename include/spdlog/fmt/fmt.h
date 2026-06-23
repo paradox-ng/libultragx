@@ -6,6 +6,10 @@
 
 #include <string>
 
+// The Fast3D interpreter includes only <spdlog/fmt/fmt.h> but also uses the
+// SPDLOG_* logging macros; pull in our spdlog shim here so they are defined.
+#include <spdlog/spdlog.h>
+
 namespace fmt {
 
 template <typename... Args>

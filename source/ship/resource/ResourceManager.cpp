@@ -65,4 +65,26 @@ std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& file
     return resource;
 }
 
+std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const std::string& filePath) {
+    return LoadResource(filePath);
+}
+
+void* ResourceManager::GetResourceRawPointer(const std::string& name) {
+    auto resource = LoadResource(name);
+    return resource != nullptr ? resource->GetRawPointer() : nullptr;
+}
+
+void* ResourceManager::GetResourceRawPointer(uint64_t crc) {
+    const char* name = mArchiveManager->HashToCString(crc);
+    return name != nullptr ? GetResourceRawPointer(std::string(name)) : nullptr;
+}
+
+void* ResourceManager::GetResourceRawPointer(std::shared_ptr<IResource> resource) {
+    return resource != nullptr ? resource->GetRawPointer() : nullptr;
+}
+
+bool ResourceManager::OtrSignatureCheck(const char* /*fileName*/) {
+    return false;
+}
+
 } // namespace Ship

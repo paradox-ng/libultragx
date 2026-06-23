@@ -18,3 +18,24 @@ These come from [libultraship](https://github.com/Kenix3/libultraship) (MIT
 licensed) and derive from the N64 SDK / decomp lineage. They are declarations
 only. Their implementations (the libultra OS calls, `osCreateThread`,
 `osContInit`, DMA, timing, ...) are reimplemented in libultragx over libogc.
+
+# Adopted Fast3D renderer (implementation reuse)
+
+Unlike the interface headers above, libultragx **reuses the Fast3D display-list
+interpreter implementation** rather than rewriting it: the gfx_pc interpreter is
+the proven heart of every libultraship port, and our work is to drive it through
+a new fixed-function GX/TEV backend, not to reimplement it.
+
+Adopted from [libultraship](https://github.com/Kenix3/libultraship) (MIT), with
+their copyright retained:
+
+- `source/fast/interpreter.cpp` (the gfx_pc interpreter, verbatim)
+- `include/fast/interpreter.h`, `lus_gbi.h`, `f3dex.h`, `f3dex2.h`,
+  `ucodehandlers.h`
+- `include/fast/backends/gfx_rendering_api.h`, `gfx_window_manager_api.h`
+- `include/fast/resource/type/{Texture,Light,DisplayList}.h` and their `.cpp`
+- `include/fast/debug/GfxDebugger.h` and `source/fast/debug/GfxDebugger.cpp`
+
+The new code is the **GX/TEV rendering backend** (`source/gfx/gfx_gx_*`, an
+original `Fast::GfxRenderingAPI` implementation) and the lean `ship/` framework
+the interpreter runs on (Context, ResourceManager, archives, binary tools).

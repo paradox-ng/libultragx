@@ -1,8 +1,12 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 namespace Ship {
+
+class ResourceManager;
+class ConsoleVariable;
 
 // Lean GameCube/Wii reimplementation of libultraship's Ship::Context.
 //
@@ -14,6 +18,13 @@ namespace Ship {
 // and the full CreateInstance/Init lifecycle arrive as those subsystems land.
 class Context {
   public:
+    // Singleton hub (matches libultraship usage: Context::GetInstance()->GetX()).
+    // The Fast3D interpreter reaches the ResourceManager and CVars through here.
+    static std::shared_ptr<Context> GetInstance();
+
+    std::shared_ptr<ResourceManager> GetResourceManager();
+    std::shared_ptr<ConsoleVariable> GetConsoleVariables();
+
     // libultragx extension: establish the per-game base directory from the
     // launched .dol path (argv[0]). Call once at startup before the path helpers.
     // e.g. "sd:/Ghostship.dol" -> base directory "sd:/Ghostship/".
@@ -28,6 +39,10 @@ class Context {
     static std::string LocateFileAcrossAppDirs(const std::string& path, const std::string& appName = "");
 
     static std::string GetShortName();
+
+  private:
+    std::shared_ptr<ResourceManager> mResourceManager;
+    std::shared_ptr<ConsoleVariable> mConsoleVariables;
 };
 
 } // namespace Ship

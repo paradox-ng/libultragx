@@ -27,4 +27,12 @@ std::shared_ptr<File> ArchiveManager::LoadFile(const std::string& filePath) {
     return nullptr;
 }
 
+std::shared_ptr<std::vector<std::shared_ptr<Archive>>> ArchiveManager::GetArchives() {
+    return std::make_shared<std::vector<std::shared_ptr<Archive>>>(mArchives);
+}
+
+const char* ArchiveManager::HashToCString(uint64_t /*hash*/) const {
+    return nullptr;
+}
+
 } // namespace Ship
