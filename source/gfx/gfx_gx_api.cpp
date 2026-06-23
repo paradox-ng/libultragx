@@ -284,17 +284,14 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     guMtxIdentity(mv);
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     Mtx44 proj;
-    (void)slot0;
-#if 1 // DIAGNOSTIC: ignore the interpreter palette; libogc guPerspective gives the
-      // correct GX z-convention (a hand-rolled GL-style matrix z-clips on GX).
-    guPerspective(proj, 60.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
-#else
+    // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),
+    // so GX needs the transpose. The matrix must already carry the GX z-mapping
+    // (a GL-convention z z-clips on GX - see scene_build / guPerspective).
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
-            proj[r][c] = mTransform.mtx_palette[slot0][c][r]; // N64 convention -> GX transpose
+            proj[r][c] = mTransform.mtx_palette[slot0][c][r];
         }
     }
-#endif
     GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
 
     const size_t verts = buf_vbo_num_tris * 3;
@@ -338,7 +335,7 @@ void GfxRenderingAPIGX::DrawBringupTriangle() {
     TransformUniforms t{};
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
-            t.mtx_palette[0][r][c] = persp[r][c];
+            t.mtx_palette[0][r][c] = persp[c][r]; // stored transposed; DrawTriangles transposes back
         }
     }
     t.y_scale[0] = 1.0f;

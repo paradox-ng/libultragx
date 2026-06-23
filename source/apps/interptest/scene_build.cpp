@@ -43,18 +43,19 @@ LugxScene lugx_build_scene_triangle() {
     s.projMtxAddr = &s_projMtx;
     s.mvMtxAddr = &s_mvMtx;
 
-    // N64-convention perspective (the interpreter transforms clip = obj_row * M;
-    // this is the transpose of the GX/GL perspective). The backend transposes the
-    // captured MV*P palette back to GX's clip = M*pos when it loads the projection.
+    // Transpose of libogc's GX guPerspective (z-row -n/(f-n), -(f*n)/(f-n), -1 -
+    // the GX z-mapping, NOT the GL f/(n-f) which z-clips on GX). Stored transposed
+    // because the interpreter transforms clip = obj_row * (MV*P) and the backend
+    // transposes the captured palette back to GX's clip = M*pos.
     const float fovy = 60.0f * 3.14159265f / 180.0f;
     const float cot = 1.0f / tanf(fovy * 0.5f);
     const float aspect = 4.0f / 3.0f;
     const float n = 10.0f, f = 2000.0f;
     s.projF[0][0] = cot / aspect;
     s.projF[1][1] = cot;
-    s.projF[2][2] = f / (n - f);
-    s.projF[3][2] = (n * f) / (n - f); // transposed off-diagonal
-    s.projF[2][3] = -1.0f;             // transposed off-diagonal
+    s.projF[2][2] = -n / (f - n);
+    s.projF[3][2] = -(f * n) / (f - n); // transpose of guPerspective [2][3]
+    s.projF[2][3] = -1.0f;              // transpose of guPerspective [3][2]
 
     // Identity modelview.
     s.mvF[0][0] = s.mvF[1][1] = s.mvF[2][2] = s.mvF[3][3] = 1.0f;
