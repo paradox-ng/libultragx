@@ -18,11 +18,14 @@
 // Common STL headers upstream libultraship.h pulled in transitively (via spdlog and
 // friends). Game TUs that include <libultraship.h> rely on these being present - e.g.
 // src/port/Matrix.cpp uses std::deque/std::stack without including them directly.
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <stack>
 #include <string>
 #include <unordered_map>
