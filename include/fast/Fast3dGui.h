@@ -2,12 +2,13 @@
 
 #include <string>
 
+#include <imgui.h>
+
 #include "ship/window/gui/Gui.h"
 
-// ImVec4 is an ImGui type; libultragx strips ImGui, so only the name is needed for
-// these (no-op) signatures. A port that includes this builds against its own ImGui
-// stub for the full type.
-struct ImVec4;
+// ImGui is stripped on console; a port supplies a type-only <imgui.h> stub on its
+// include path (so ImVec4 is a complete type for callers that construct it). These
+// GUI helpers are no-ops.
 
 namespace Fast {
 class Texture;
