@@ -15,6 +15,19 @@
 // (via libultra_internal.h), so guard them - C files get only the N64 ABI + the C
 // bridges (and the event macros above) from the umbrella, never the class headers.
 #ifdef __cplusplus
+// Common STL headers upstream libultraship.h pulled in transitively (via spdlog and
+// friends). Game TUs that include <libultraship.h> rely on these being present - e.g.
+// src/port/Matrix.cpp uses std::deque/std::stack without including them directly.
+#include <array>
+#include <deque>
+#include <functional>
+#include <map>
+#include <memory>
+#include <stack>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include "ship/events/EventSystem.h"
 #include "ship/events/CoreEvents.h"
 #include "ship/Context.h"

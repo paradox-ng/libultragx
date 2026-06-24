@@ -7,6 +7,12 @@
 #include <unordered_set>
 #include <vector>
 
+// A game's Engine.h declares ImFont* font members but does not include <imgui.h>
+// (upstream pulled it transitively through the GUI). libultragx strips ImGui, so
+// forward-declare the opaque type here - Context.h is on every game TU's include
+// path - to keep those pointer members valid.
+struct ImFont;
+
 namespace Ship {
 
 class ResourceManager;
