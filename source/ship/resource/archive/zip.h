@@ -39,6 +39,7 @@ class ZipArchive {
     bool ReadCentralDirectory();
 
     FILE* mFile = nullptr;
+    std::vector<uint8_t> mData; // the whole archive in RAM; mFile is an fmemopen view of it
     std::unordered_map<std::string, Entry> mEntries;
     std::vector<std::string> mNames;
 };

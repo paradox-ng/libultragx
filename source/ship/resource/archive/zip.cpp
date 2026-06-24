@@ -35,8 +35,31 @@ ZipArchive::~ZipArchive() {
 
 bool ZipArchive::Open(const std::string& path) {
     Close();
-    mFile = fopen(path.c_str(), "rb");
+    // Read the whole archive into RAM and serve all reads from there (via an
+    // fmemopen view), then close the SD file handle. Keeping the SD handle open and
+    // interleaving its reads with other libfat I/O (e.g. log writes) deadlocks under
+    // Dolphin's emulated SD after a few dozen ops.
+    FILE* disk = fopen(path.c_str(), "rb");
+    if (disk == nullptr) {
+        return false;
+    }
+    fseek(disk, 0, SEEK_END);
+    long sz = ftell(disk);
+    fseek(disk, 0, SEEK_SET);
+    if (sz <= 0) {
+        fclose(disk);
+        return false;
+    }
+    mData.resize((size_t)sz);
+    size_t got = fread(mData.data(), 1, (size_t)sz, disk);
+    fclose(disk);
+    if (got != (size_t)sz) {
+        Close();
+        return false;
+    }
+    mFile = fmemopen(mData.data(), mData.size(), "rb");
     if (mFile == nullptr) {
+        Close();
         return false;
     }
     if (!ReadCentralDirectory()) {
@@ -51,6 +74,8 @@ void ZipArchive::Close() {
         fclose(mFile);
         mFile = nullptr;
     }
+    mData.clear();
+    mData.shrink_to_fit();
     mEntries.clear();
     mNames.clear();
 }
