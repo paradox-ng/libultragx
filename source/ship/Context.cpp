@@ -8,6 +8,8 @@
 #include "ship/window/Window.h"
 #include "ship/events/EventSystem.h"
 #include "ship/scripting/ScriptLoader.h"
+#include "ship/audio/Audio.h"
+#include <spdlog/spdlog.h>
 
 #include <sys/stat.h>
 #include <utility>
@@ -156,6 +158,26 @@ std::shared_ptr<ScriptLoader> Context::GetScriptLoader() {
         mScriptLoader = std::make_shared<ScriptLoader>();
     }
     return mScriptLoader;
+}
+
+bool Context::InitAudio(AudioSettings /*settings*/) {
+    // No output backend yet; create the inert Audio so GetAudio() is valid.
+    mAudio = std::make_shared<Audio>();
+    return true;
+}
+
+std::shared_ptr<Audio> Context::GetAudio() {
+    if (mAudio == nullptr) {
+        mAudio = std::make_shared<Audio>();
+    }
+    return mAudio;
+}
+
+std::shared_ptr<spdlog::logger> Context::GetLogger() {
+    if (mLogger == nullptr) {
+        mLogger = std::make_shared<spdlog::logger>();
+    }
+    return mLogger;
 }
 
 std::shared_ptr<Window> Context::GetWindow() const {

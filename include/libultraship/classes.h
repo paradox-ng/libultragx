@@ -28,10 +28,10 @@
 #include <unordered_map>
 #include <vector>
 
-// Game/port C++ code that includes <libultraship.h> logs via SPDLOG_* macros (and
-// the spdlog:: namespace), which upstream pulled in transitively. Provide the lean
-// no-op shim so those translation units compile.
-#include <spdlog/spdlog.h>
+// Game/port C++ code that includes <libultraship.h> logs via SPDLOG_* macros and
+// calls fmt::format, which upstream pulled in transitively. fmt.h provides the fmt
+// shim and pulls in the spdlog shim (SPDLOG_* + spdlog::).
+#include <spdlog/fmt/fmt.h>
 
 #include "ship/events/EventSystem.h"
 #include "ship/events/CoreEvents.h"
@@ -50,6 +50,8 @@
 #include "ship/window/gui/GuiElement.h"
 #include "ship/window/gui/GuiWindow.h"
 #include "ship/controller/controldeck/ControlDeck.h"
+#include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
+#include "ship/audio/Audio.h"
 #endif // __cplusplus
 
 // TODO - remaining ship/ framework for the game's full include surface (see

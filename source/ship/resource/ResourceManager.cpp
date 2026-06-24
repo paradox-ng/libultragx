@@ -74,8 +74,13 @@ std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& file
     return resource;
 }
 
-std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const std::string& filePath) {
-    return LoadResource(filePath);
+std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const std::string& filePath, bool loadExact) {
+    return LoadResource(filePath, loadExact);
+}
+
+void ResourceManager::LoadResources(const std::string& /*searchMask*/) {
+    // No-op: resources load lazily on first use. A real preload would iterate the
+    // archive entries matching the mask and LoadResource each.
 }
 
 void* ResourceManager::GetResourceRawPointer(const std::string& name) {

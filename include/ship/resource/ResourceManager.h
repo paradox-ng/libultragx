@@ -5,6 +5,8 @@
 #include <string>
 #include <unordered_map>
 
+#include <BS_thread_pool.hpp>
+
 #include "ship/resource/Resource.h"
 #include "ship/resource/ResourceFactory.h"
 #include "ship/resource/ResourceLoader.h"
@@ -47,7 +49,11 @@ class ResourceManager {
     // libultraship-compatible surface the Fast3D interpreter calls. Process =
     // load (our loader is already synchronous, so it is a thin alias). The
     // raw-pointer helpers load (if needed) and hand back the typed payload.
-    std::shared_ptr<IResource> LoadResourceProcess(const std::string& filePath);
+    std::shared_ptr<IResource> LoadResourceProcess(const std::string& filePath, bool loadExact = false);
+    // Batch preload (a game warms a directory of resources up front). Synchronous
+    // here; nothing to do beyond loading each matching entry, which the game also
+    // does lazily, so this is a no-op for now.
+    void LoadResources(const std::string& searchMask);
     void* GetResourceRawPointer(const std::string& name);
     void* GetResourceRawPointer(uint64_t crc);
     void* GetResourceRawPointer(std::shared_ptr<IResource> resource);

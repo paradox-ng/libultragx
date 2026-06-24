@@ -10,9 +10,6 @@
 #include <memory>
 #include <string>
 
-// Game/port code calls fmt::format directly (upstream pulls fmt in through spdlog).
-#include "fmt/fmt.h"
-
 namespace spdlog {
 
 namespace level {
@@ -28,6 +25,7 @@ class logger {
     template <typename... Args> void error(Args&&...) {}
     template <typename... Args> void critical(Args&&...) {}
     void set_level(level::level_enum) {}
+    void set_pattern(const std::string&) {}
     void flush() {}
 };
 

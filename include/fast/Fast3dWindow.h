@@ -17,6 +17,16 @@ class GuiWindow;
 
 namespace Fast {
 
+// Render backend identifiers (matches upstream Fast3D). libultragx only has the GX
+// backend, but a game's window-settings menu references these names, so keep the
+// enum for type/compile compatibility.
+enum WindowBackend {
+    FAST3D_DXGI_DX11 = 1,
+    FAST3D_SDL_OPENGL = 2,
+    FAST3D_SDL_METAL = 3,
+    FAST3D_SDL_VULKAN = 4,
+};
+
 // Lean GX-backed Fast3D window. Wraps our GfxRenderingAPIGX + GfxWindowBackendGX and
 // the Fast3D interpreter (all already proven by apps/realdltest), exposing the
 // surface the game drives via Context::GetWindow() / its gsFast3dWindow handle.

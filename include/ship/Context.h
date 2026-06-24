@@ -7,11 +7,17 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ship/audio/Audio.h"
+
 // A game's Engine.h declares ImFont* font members but does not include <imgui.h>
 // (upstream pulled it transitively through the GUI). libultragx strips ImGui, so
 // forward-declare the opaque type here - Context.h is on every game TU's include
 // path - to keep those pointer members valid.
 struct ImFont;
+
+namespace spdlog {
+class logger;
+}
 
 namespace Ship {
 
@@ -19,6 +25,8 @@ class ResourceManager;
 class ConsoleVariable;
 class Window;
 class ControlDeck;
+class Audio;
+struct AudioSettings;
 class Console;
 class EventSystem;
 class ScriptLoader;
@@ -80,11 +88,19 @@ class Context {
                           std::string compileFlags = "", std::vector<std::string> includePaths = {},
                           std::vector<std::string> libraryPaths = {}, std::vector<std::string> libraries = {});
 
+    // Desktop-only init paths that are inert on console (no crash handler / OS file
+    // drop). Kept so a game's startup sequence compiles and links.
+    bool InitCrashHandler() { return true; }
+    bool InitFileDropMgr() { return true; }
+    bool InitAudio(AudioSettings settings = {});
+
     std::shared_ptr<Window> GetWindow() const;
     std::shared_ptr<ControlDeck> GetControlDeck() const;
     std::shared_ptr<Console> GetConsole() const;
     std::shared_ptr<EventSystem> GetEventSystem();
     std::shared_ptr<ScriptLoader> GetScriptLoader();
+    std::shared_ptr<Audio> GetAudio();
+    std::shared_ptr<spdlog::logger> GetLogger();
     std::string GetName() const;
 
   private:
@@ -95,6 +111,8 @@ class Context {
     std::shared_ptr<Console> mConsole;
     std::shared_ptr<EventSystem> mEventSystem;
     std::shared_ptr<ScriptLoader> mScriptLoader;
+    std::shared_ptr<Audio> mAudio;
+    std::shared_ptr<spdlog::logger> mLogger;
     std::string mName;
     std::string mConfigName;
 };
