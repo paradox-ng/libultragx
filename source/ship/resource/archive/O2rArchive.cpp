@@ -7,7 +7,15 @@ namespace Ship {
 O2rArchive::O2rArchive() : mZip(std::make_unique<ZipArchive>()) {
 }
 
+O2rArchive::O2rArchive(const std::string& path) : mZip(std::make_unique<ZipArchive>()) {
+    mPath = path;
+}
+
 O2rArchive::~O2rArchive() = default;
+
+bool O2rArchive::Open() {
+    return Open(mPath);
+}
 
 bool O2rArchive::Open(const std::string& path) {
     mPath = path;

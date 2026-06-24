@@ -14,11 +14,16 @@ class ZipArchive;
 class O2rArchive : public Archive {
   public:
     O2rArchive();
+    // Construct with the on-disk path; pair with the no-arg Open() (the form the
+    // game uses). The path is not opened until Open() is called.
+    explicit O2rArchive(const std::string& path);
     ~O2rArchive() override;
 
     // Open the archive at `path` (e.g. "sd:/sm64.o2r"). Returns false if it
-    // cannot be opened or has no central directory.
+    // cannot be opened or has no central directory. The no-arg form opens the path
+    // given to the constructor.
     bool Open(const std::string& path);
+    bool Open();
 
     bool HasFile(const std::string& filePath) override;
     std::shared_ptr<File> LoadFile(const std::string& filePath) override;

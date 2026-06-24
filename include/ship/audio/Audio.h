@@ -27,6 +27,7 @@ class AudioPlayer {
     bool IsInitialized() { return false; }
     int32_t Buffered() { return 0; }
     int32_t GetDesiredBuffered() { return 1100; }
+    int32_t GetSampleRate() const { return 32000; }
     void Play(const uint8_t* /*buf*/, uint32_t /*len*/) {}
 };
 
