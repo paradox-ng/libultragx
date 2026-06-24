@@ -56,10 +56,8 @@ int main(int argc, char** argv) {
             rm->RegisterResourceFactory(0x4F4D5458u, std::make_shared<Fast::MatrixFactory>());        // OMTX
             rm->RegisterResourceFactory(0x4F544558u, std::make_shared<Fast::TextureFactory>());       // OTEX
             rm->RegisterResourceFactory(0x46669697u, std::make_shared<Fast::LightFactory>());         // LGTS
-            auto dlRes = rm->LoadResource("actors/mario/mario_torso_dl");
-            if (dlRes != nullptr) {
-                dl = (Gfx*)dlRes->GetRawPointer();
-            }
+            // Load through the C resource bridge (what the game's C code uses).
+            dl = (Gfx*)ResourceGetDataByName("actors/mario/mario_torso_dl");
         }
     }
 
