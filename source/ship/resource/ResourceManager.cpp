@@ -47,7 +47,8 @@ std::shared_ptr<ResourceInitData> ResourceManager::ReadResourceInitData(const st
     return init;
 }
 
-std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& filePath) {
+std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& filePath, bool /*loadExact*/,
+                                                         std::shared_ptr<ResourceInitData> /*initData*/) {
     if (auto cached = GetCachedResource(filePath)) {
         return cached;
     }

@@ -10,6 +10,9 @@
 #include <memory>
 #include <string>
 
+// Game/port code calls fmt::format directly (upstream pulls fmt in through spdlog).
+#include "fmt/fmt.h"
+
 namespace spdlog {
 
 namespace level {

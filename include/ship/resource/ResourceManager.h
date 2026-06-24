@@ -37,7 +37,12 @@ class ResourceManager {
     bool IsAltAssetsEnabled() const { return mAltAssetsEnabled; }
 
     std::shared_ptr<IResource> GetCachedResource(const std::string& filePath);
-    std::shared_ptr<IResource> LoadResource(const std::string& filePath);
+    // loadExact / initData match the upstream signature so a game's call sites
+    // compile. libultragx ignores them for now: it always parses the resource
+    // header and dispatches via the ResourceLoader (no header override, and the
+    // cache is consulted regardless of loadExact).
+    std::shared_ptr<IResource> LoadResource(const std::string& filePath, bool loadExact = false,
+                                            std::shared_ptr<ResourceInitData> initData = nullptr);
 
     // libultraship-compatible surface the Fast3D interpreter calls. Process =
     // load (our loader is already synchronous, so it is a thin alias). The
