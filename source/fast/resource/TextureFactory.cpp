@@ -3,13 +3,14 @@
 
 namespace Fast {
 
-std::shared_ptr<Ship::IResource> TextureFactory::ReadResource(std::shared_ptr<Ship::File> file) {
-    if (file == nullptr || file->Reader == nullptr || file->Buffer == nullptr) {
+std::shared_ptr<Ship::IResource> TextureFactory::ReadResource(std::shared_ptr<Ship::File> file,
+                                                              std::shared_ptr<Ship::ResourceInitData> initData) {
+    if (!FileHasValidFormatAndReader(file, initData) || file->Buffer == nullptr) {
         return nullptr;
     }
-    auto texture = std::make_shared<Texture>(file->InitData);
-    auto& reader = file->Reader;
-    const int version = file->InitData != nullptr ? file->InitData->ResourceVersion : 0;
+    auto texture = std::make_shared<Texture>(initData);
+    auto reader = std::get<std::shared_ptr<Ship::BinaryReader>>(file->Reader);
+    const int version = initData != nullptr ? initData->ResourceVersion : 0;
 
     texture->Type = (TextureType)reader->ReadUInt32();
     texture->Width = (uint16_t)reader->ReadUInt32();

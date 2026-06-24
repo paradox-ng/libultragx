@@ -26,7 +26,7 @@ std::shared_ptr<ResourceInitData> ResourceManager::ReadResourceInitData(const st
     //   [8..11] ResourceVersion
     //   [12..19] Id
     auto init = std::make_shared<ResourceInitData>();
-    auto& r = file->Reader;
+    auto r = std::get<std::shared_ptr<BinaryReader>>(file->Reader);
 
     init->ByteOrder = (Endianness)r->ReadInt8();
     r->SetEndianness(init->ByteOrder);
@@ -54,7 +54,8 @@ std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& file
     }
 
     auto file = mArchiveManager->LoadFile(filePath);
-    if (file == nullptr || file->Reader == nullptr) {
+    if (file == nullptr || !std::holds_alternative<std::shared_ptr<BinaryReader>>(file->Reader) ||
+        std::get<std::shared_ptr<BinaryReader>>(file->Reader) == nullptr) {
         return nullptr;
     }
 
@@ -65,7 +66,7 @@ std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& file
         return nullptr; // no factory registered for this Type
     }
 
-    auto resource = fit->second->ReadResource(file);
+    auto resource = fit->second->ReadResource(file, file->InitData);
     if (resource != nullptr) {
         mCache[filePath] = resource;
     }

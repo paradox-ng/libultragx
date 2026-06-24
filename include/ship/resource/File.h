@@ -3,10 +3,15 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "ship/resource/ResourceType.h"
 #include "ship/utils/binarytools/BinaryReader.h"
+
+namespace tinyxml2 {
+class XMLDocument;
+} // namespace tinyxml2
 
 namespace Ship {
 class Archive;
@@ -27,11 +32,15 @@ struct ResourceInitData {
     uint32_t Format = RESOURCE_FORMAT_BINARY;
 };
 
-// A loaded archive entry: the decompressed bytes, a reader over them, and the
-// parsed header. (libultragx ships no XML/tinyxml2 reader; binary only.)
+// A loaded archive entry: the decompressed bytes and a reader over them. Reader is a
+// variant (binary or XML) to match the upstream libultraship contract so a game's
+// factories - which do std::get<std::shared_ptr<BinaryReader>>(file->Reader) - plug
+// in unchanged. libultragx only produces the BinaryReader alternative (no XML reader
+// yet); the XML alternative exists for type compatibility.
 struct File {
     std::shared_ptr<std::vector<char>> Buffer;
-    std::shared_ptr<BinaryReader> Reader;
+    uint32_t BufferOffset = 0;
+    std::variant<std::shared_ptr<BinaryReader>, std::shared_ptr<tinyxml2::XMLDocument>> Reader;
     std::shared_ptr<ResourceInitData> InitData;
     bool IsLoaded = false;
 };

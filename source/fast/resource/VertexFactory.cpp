@@ -6,12 +6,13 @@
 
 namespace Fast {
 
-std::shared_ptr<Ship::IResource> VertexFactory::ReadResource(std::shared_ptr<Ship::File> file) {
-    if (file == nullptr || file->Reader == nullptr) {
+std::shared_ptr<Ship::IResource> VertexFactory::ReadResource(std::shared_ptr<Ship::File> file,
+                                                             std::shared_ptr<Ship::ResourceInitData> initData) {
+    if (!FileHasValidFormatAndReader(file, initData)) {
         return nullptr;
     }
-    auto vertex = std::make_shared<Vertex>(file->InitData);
-    auto& reader = file->Reader;
+    auto vertex = std::make_shared<Vertex>(initData);
+    auto reader = std::get<std::shared_ptr<Ship::BinaryReader>>(file->Reader);
 
     uint32_t count = reader->ReadUInt32();
     vertex->VertexList.reserve(count);
