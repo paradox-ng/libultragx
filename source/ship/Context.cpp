@@ -1,6 +1,7 @@
 #include "ship/Context.h"
 
 #include "platform/paths.h"
+#include "platform/sd.h"
 #include "ship/resource/ResourceManager.h"
 #include "ship/resource/archive/ArchiveManager.h"
 #include "ship/resource/archive/O2rArchive.h"
@@ -83,7 +84,17 @@ std::shared_ptr<Context> Context::CreateUninitializedInstance(const std::string&
     auto ctx = GetInstance();
     ctx->mName = name;
     ctx->mConfigName = configName;
-    sShortName = shortName; // the per-game SD base dir itself is resolved by InitPaths(argv0)
+    sShortName = shortName;
+
+    // Mount the SD card and default the per-game base dir so the game's path
+    // resolution finds its archives without the game calling lugx_sd_mount/InitPaths
+    // explicitly (the apps do that; the game boots straight through this). The base
+    // dir is sd:/<name>/ (e.g. sd:/Ghostship/), matching where the .dol+o2r live; a
+    // later InitPaths(argv0) can still override it.
+    lugx_sd_mount();
+    if (sBaseDir.empty()) {
+        sBaseDir = "sd:/" + name + "/";
+    }
     return ctx;
 }
 
