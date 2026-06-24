@@ -38,10 +38,19 @@ then the per-frame loop drives Fast3D through GBIMiddleware.
    call (GetWidth/Height, the gfx-api accessor, MainLoop/draw entry). realdltest's
    driver is the proof-of-concept to generalize.
 
-3. **`GBIMiddleware`** (`src/port/GBIMiddleware.cpp`) is how the game feeds gfx to
-   Fast3D each frame. Confirm it only needs the interpreter API we already expose
-   (Interpreter::Run with the game's Gfx list, the matrix/combiner/light state the
-   game sets via real DL commands - no more hard-coded combiner/camera/lights).
+3. **`GBIMiddleware` + the `<libultraship.h>` umbrella** - PARTLY DONE. Confirmed the
+   render bridge: `GameEngine::ProcessGfxCommands(Gfx*)` -> `RunCommands` ->
+   `wnd->DrawAndRunGraphicsCommands(commands, r.mtx, r.dl)`, which is exactly the
+   Fast3dWindow method we implemented (mtx/dl come from the frame-interpolation
+   system). `GBIMiddleware.cpp` itself is 108 lines of `extern "C"` GBI shims
+   (`gSPDisplayList`/`gSPVertex`/...) that resolve resource paths via
+   `ResourceManager::LoadResource` + touch `Fast::DisplayList::Instructions[]` - all
+   present. Created the `<libultraship.h>` umbrella (libultraship.h + classes.h) that
+   aggregates libultragx's existing Ship:: surface; it compiles (apps/fwtest now pulls
+   Context/ResourceManager/archives through it). STILL NEEDED for the game's full
+   include surface: the gbi macro shims (`__gSPDisplayList` etc., `GfxPatch`,
+   `ResourceGetDataByName`), and the subsystems the umbrella's classes.h still TODOs:
+   **ControlDeck/Controller, Console, Config, CrashHandler, Audio** (steps 4 + below).
 
 4. **`LUS::ControlDeck`** over PAD/WPAD - map GC pad + Wii remote to the N64 buttons
    the game reads. Minimal: one controller, the standard mapping.

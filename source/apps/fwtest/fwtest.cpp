@@ -10,9 +10,9 @@
 #include <memory>
 #include <unordered_map>
 
+#include <libultraship.h> // the game-facing umbrella (Context/ResourceManager/archives/...)
 #include "fast/Fast3dWindow.h"
 #include "fast/backends/gfx_gx_camera.h"
-#include "ship/Context.h"
 #include "ship/resource/ResourceManager.h"
 #include "ship/resource/archive/O2rArchive.h"
 #include "fast/resource/factory/DisplayListFactory.h"
