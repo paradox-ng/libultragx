@@ -28,6 +28,11 @@
 #include <unordered_map>
 #include <vector>
 
+// Game/port C++ code that includes <libultraship.h> logs via SPDLOG_* macros (and
+// the spdlog:: namespace), which upstream pulled in transitively. Provide the lean
+// no-op shim so those translation units compile.
+#include <spdlog/spdlog.h>
+
 #include "ship/events/EventSystem.h"
 #include "ship/events/CoreEvents.h"
 #include "ship/Context.h"

@@ -21,6 +21,7 @@ class Window;
 class ControlDeck;
 class Console;
 class EventSystem;
+class ScriptLoader;
 
 // Lean GameCube/Wii reimplementation of libultraship's Ship::Context.
 //
@@ -83,6 +84,7 @@ class Context {
     std::shared_ptr<ControlDeck> GetControlDeck() const;
     std::shared_ptr<Console> GetConsole() const;
     std::shared_ptr<EventSystem> GetEventSystem();
+    std::shared_ptr<ScriptLoader> GetScriptLoader();
     std::string GetName() const;
 
   private:
@@ -92,6 +94,7 @@ class Context {
     std::shared_ptr<ControlDeck> mControlDeck;
     std::shared_ptr<Console> mConsole;
     std::shared_ptr<EventSystem> mEventSystem;
+    std::shared_ptr<ScriptLoader> mScriptLoader;
     std::string mName;
     std::string mConfigName;
 };

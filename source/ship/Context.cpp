@@ -7,6 +7,7 @@
 #include "ship/config/ConsoleVariable.h"
 #include "ship/window/Window.h"
 #include "ship/events/EventSystem.h"
+#include "ship/scripting/ScriptLoader.h"
 
 #include <sys/stat.h>
 #include <utility>
@@ -145,7 +146,16 @@ std::shared_ptr<EventSystem> Context::GetEventSystem() {
 bool Context::InitScriptLoader(std::unordered_map<std::string, std::string> /*compileDefines*/, int /*codeVersion*/,
                                std::string /*compileFlags*/, std::vector<std::string> /*includePaths*/,
                                std::vector<std::string> /*libraryPaths*/, std::vector<std::string> /*libraries*/) {
-    return true; // no runtime (TCC) script compilation on console
+    // No runtime (TCC) script compilation on console; the loader is a no-op.
+    mScriptLoader = std::make_shared<ScriptLoader>();
+    return true;
+}
+
+std::shared_ptr<ScriptLoader> Context::GetScriptLoader() {
+    if (mScriptLoader == nullptr) {
+        mScriptLoader = std::make_shared<ScriptLoader>();
+    }
+    return mScriptLoader;
 }
 
 std::shared_ptr<Window> Context::GetWindow() const {
