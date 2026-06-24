@@ -7,6 +7,10 @@
 // exactly as upstream - keeping the gbi-only interpreter out of this header so GX
 // translation units can still include <libultraship.h>.)
 
+// These are C++ classes; the game's C translation units also pull <libultraship.h>
+// (via libultra_internal.h), so guard them - C files get only the N64 ABI + the C
+// bridges from the umbrella, never the Ship:: class headers.
+#ifdef __cplusplus
 #include "ship/Context.h"
 #include "ship/resource/ResourceManager.h"
 #include "ship/resource/archive/Archive.h"
@@ -22,6 +26,7 @@
 #include "ship/window/gui/GuiElement.h"
 #include "ship/window/gui/GuiWindow.h"
 #include "ship/controller/controldeck/ControlDeck.h"
+#endif // __cplusplus
 
 // TODO - remaining ship/ framework for the game's full include surface (see
 // docs/INTEGRATION.md). Each is a subsequent step; until they land, a game TU that

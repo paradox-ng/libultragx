@@ -59,12 +59,30 @@ then the per-frame loop drives Fast3D through GBIMiddleware.
    config as CVar defaults (all `gEnhancements.*` off = vanilla; 480p 4:3; 30fps).
    Resolution/fps are OUR backend's job. See the ImGui decision in memory.
 
-6. **Cross-compile the game source for PPC** - the big one. The decomp SM64 +
-   goddard + audio + menu + port layer, built with the libultragx Makefile (add the
-   game source dirs to SOURCES) or as a lib the devkitPPC game build links. Chase the
-   first wave of compile errors: desktop assumptions (SDL/x86), endianness, the asset
-   segment system. First milestone: **compiles**; then **links**; then **reaches the
-   main loop** (M1); then first game frame on screen (M2/M3).
+6. **Cross-compile the game source for PPC** - the big one, STARTED. The decomp SM64 +
+   goddard + audio + menu + port layer. Assets are RUNTIME o2r resources (no generated
+   asset headers); the only codegen is trivial version templates (build.c/properties.h
+   via configure_file). The CMake compiles a SPECIFIC source set - notably it lists
+   only the portable `lib/src` files (gu-math + alBnkfNew/osAiSetFrequency) and EXCLUDES
+   the N64-hardware ones (contramread, D_802F*, func_802F* - threading/RCP registers).
+   Includes: `Ghostship/{include,src}` + libultragx `include` + `extern/{prism/src,json/single_include}`.
+
+   Probe findings (devkitPPC `-fsyntax-only`):
+   - PROVEN: real game source compiles for PPC against libultragx - `guNormalize.c`,
+     `guMtxF2L.c`, `alBnkfNew.c`, `osAiSetFrequency.c` build clean.
+   - FIXED: `<libultraship.h>` must be C-safe. The game's `.c` files pull it (via
+     `lib/src/libultra_internal.h`); classes.h's C++ class includes are now guarded
+     by `#ifdef __cplusplus`, so C TUs get only the N64 ABI + the C bridges.
+   - Remaining concrete gaps to chase: the game's `include/macros.h` redefines the
+     `G_CC_*` combiner macros that libultragx's gbi.h also defines (reconcile or
+     `-Wno-...`); `<fast/resource/ResourceType.h>` path (libultragx has it under
+     `ship/resource/` - add a `fast/` forwarder or move it); the event system
+     (`DEFINE_EVENT` in `src/port/events/list/*.h` is undefined - InitEventSystem is a
+     stub; the macro/registration header is needed); then the per-file flood.
+
+   Next: stand up a devkitPPC Makefile in the Ghostship fork (libultragx as a submodule)
+   with the source set + include paths + defines above, and chase per-file. First
+   milestone: **compiles**; then **links**; then **reaches the main loop**.
 
 7. **Audio (ASND), save (libfat), boot polish.**
 
