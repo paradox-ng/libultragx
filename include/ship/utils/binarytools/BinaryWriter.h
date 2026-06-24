@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 #include "endianness.h"
 #include "Stream.h"
 
@@ -38,6 +39,7 @@ class BinaryWriter {
     void Write(char* srcBuffer, size_t length);
 
     std::shared_ptr<Stream> GetStream();
+    std::vector<char> ToVector(); // raw copy of everything written so far
 
   private:
     std::shared_ptr<Stream> mStream;

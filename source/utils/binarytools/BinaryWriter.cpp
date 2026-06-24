@@ -102,4 +102,8 @@ std::shared_ptr<Stream> BinaryWriter::GetStream() {
     return mStream;
 }
 
+std::vector<char> BinaryWriter::ToVector() {
+    return mStream->ToVector();
+}
+
 } // namespace Ship
