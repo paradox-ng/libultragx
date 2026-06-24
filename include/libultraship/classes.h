@@ -21,12 +21,12 @@
 #include "ship/window/gui/Gui.h"
 #include "ship/window/gui/GuiElement.h"
 #include "ship/window/gui/GuiWindow.h"
+#include "ship/controller/controldeck/ControlDeck.h"
 
 // TODO - remaining ship/ framework for the game's full include surface (see
 // docs/INTEGRATION.md). Each is a subsequent step; until they land, a game TU that
 // uses them won't compile against libultragx:
-//   ship/controller/controldeck/ControlDeck.h
-//   ship/controller/controldevice/controller/Controller.h
+//   ship/controller/controldevice/controller/Controller.h (per-device mapping; UI)
 //   ship/controller/.../keyboard/KeyboardScancodes.h
 //   ship/debug/Console.h
 //   ship/config/Config.h

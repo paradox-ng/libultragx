@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include <libultraship.h> // the game-facing umbrella (Context/ResourceManager/archives/...)
+#include "libultraship/controller/controldeck/ControlDeck.h"
 #include "fast/Fast3dWindow.h"
 #include "fast/backends/gfx_gx_camera.h"
 #include "ship/resource/ResourceManager.h"
@@ -78,10 +79,18 @@ int main(int argc, char** argv) {
     view[2][3] = -400.0f;
     Fast::lugx_gx_set_view_matrix(view);
 
+    // Exercise the ControlDeck read path each frame (GC pad -> OSContPad). No input
+    // arrives headless, but this proves PAD_Init/PAD_ScanPads run without crashing on
+    // the emulated hardware; button mapping needs a real controller to verify.
+    auto deck = std::make_shared<LUS::ControlDeck>();
+    uint8_t controllerBits = 0;
+    deck->Init(&controllerBits);
+
     auto interp = window->GetInterpreterWeak().lock();
     std::unordered_map<Mtx*, MtxF> mtxRepl;
     while (window->IsRunning()) {
         window->HandleEvents();
+        deck->WriteToPad(nullptr);
         if (dl != nullptr && interp != nullptr) {
             // The standalone DL sets none of these (the game would); supply them.
             interp->mRdp->combine_mode = 0x08008000ULL;                 // G_CC_SHADE
