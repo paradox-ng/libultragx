@@ -9,11 +9,16 @@ std::shared_ptr<Ship::IResource> MatrixFactory::ReadResource(std::shared_ptr<Shi
     }
     auto matrix = std::make_shared<Matrix>(file->InitData);
     auto& reader = file->Reader;
-    // 16 int32: the N64 fixed-point matrix (8 integer-part words then 8 fraction-
-    // part words), stored verbatim - the interpreter decodes the fixed point.
+    // The OMTX matches the build's GBI convention: 16 floats under GBI_FLOATS (which
+    // the game compiles with), else the N64 fixed-point int32 matrix. Mtx is MtxF or
+    // the fixed-point form accordingly, so write the matching union member.
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
+#ifdef GBI_FLOATS
+            matrix->Matrx.mf[i][j] = reader->ReadFloat();
+#else
             matrix->Matrx.m[i][j] = reader->ReadInt32();
+#endif
         }
     }
     return matrix;
