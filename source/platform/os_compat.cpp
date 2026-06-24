@@ -16,8 +16,13 @@
 #include <cstdint>
 #include <cstring>
 
-#include <ogc/cache.h>
-#include <ogc/lwp_watchdog.h>
+// Forward-declare the few libogc entry points used here instead of including
+// <ogc/cache.h>/<ogc/lwp_watchdog.h>: those transitively pull <ogc/gu.h>, whose
+// Mtx typedef (f32[3][4]) collides with the N64 libultra Mtx in scope from the
+// libultra headers above.
+extern "C" void DCFlushRange(void* startaddr, uint32_t len);
+extern "C" void DCInvalidateRange(void* startaddr, uint32_t len);
+extern "C" uint64_t gettime(void);
 
 extern "C" {
 
