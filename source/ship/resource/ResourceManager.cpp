@@ -47,8 +47,15 @@ std::shared_ptr<ResourceInitData> ResourceManager::ReadResourceInitData(const st
     return init;
 }
 
-std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& filePath, bool /*loadExact*/,
+std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& rawPath, bool /*loadExact*/,
                                                          std::shared_ptr<ResourceInitData> /*initData*/) {
+    // Game resource references carry the libultraship "__OTR__" prefix (display-list
+    // pointers replaced with archive paths, audio/asset lookups, etc.); strip it so
+    // the name matches the archive entry.
+    static const std::string kOtrPrefix = "__OTR__";
+    const std::string filePath =
+        rawPath.compare(0, kOtrPrefix.size(), kOtrPrefix) == 0 ? rawPath.substr(kOtrPrefix.size()) : rawPath;
+
     if (auto cached = GetCachedResource(filePath)) {
         return cached;
     }
