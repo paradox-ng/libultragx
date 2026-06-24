@@ -5,6 +5,7 @@
 #include "ship/resource/archive/ArchiveManager.h"
 #include "ship/resource/archive/O2rArchive.h"
 #include "ship/config/ConsoleVariable.h"
+#include "ship/window/Window.h"
 
 #include <sys/stat.h>
 #include <utility>
@@ -122,6 +123,9 @@ bool Context::InitConsole() {
 
 bool Context::InitWindow(std::shared_ptr<Window> window) {
     mWindow = std::move(window);
+    if (mWindow != nullptr) {
+        mWindow->Init(); // bring up VI/GX + the interpreter (Fast3dWindow::Init)
+    }
     return true;
 }
 
