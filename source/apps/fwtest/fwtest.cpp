@@ -51,11 +51,11 @@ int main(int argc, char** argv) {
         auto archive = std::make_shared<Ship::O2rArchive>();
         if (archive->Open("sd:/sm64.o2r")) {
             rm->GetArchiveManager()->AddArchive(archive);
-            rm->RegisterResourceFactory(0x4F444C54u, std::make_shared<Fast::DisplayListFactory>()); // ODLT
-            rm->RegisterResourceFactory(0x4F565458u, std::make_shared<Fast::VertexFactory>());       // OVTX
-            rm->RegisterResourceFactory(0x4F4D5458u, std::make_shared<Fast::MatrixFactory>());        // OMTX
-            rm->RegisterResourceFactory(0x4F544558u, std::make_shared<Fast::TextureFactory>());       // OTEX
-            rm->RegisterResourceFactory(0x46669697u, std::make_shared<Fast::LightFactory>());         // LGTS
+            rm->RegisterResourceFactory(0x4F444C54u, std::make_shared<Fast::ResourceFactoryBinaryDisplayListV0>()); // ODLT
+            rm->RegisterResourceFactory(0x4F565458u, std::make_shared<Fast::ResourceFactoryBinaryVertexV0>());       // OVTX
+            rm->RegisterResourceFactory(0x4F4D5458u, std::make_shared<Fast::ResourceFactoryBinaryMatrixV0>());        // OMTX
+            rm->RegisterResourceFactory(0x4F544558u, std::make_shared<Fast::ResourceFactoryBinaryTextureV0>());       // OTEX
+            rm->RegisterResourceFactory(0x46669697u, std::make_shared<Fast::ResourceFactoryBinaryLightV0>());         // LGTS
             // Load through the C resource bridge (what the game's C code uses).
             dl = (Gfx*)ResourceGetDataByName("actors/mario/mario_torso_dl");
         }

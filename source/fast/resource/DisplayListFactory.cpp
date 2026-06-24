@@ -7,12 +7,19 @@
 
 namespace Fast {
 
-std::shared_ptr<Ship::IResource> DisplayListFactory::ReadResource(std::shared_ptr<Ship::File> file,
-                                                                  std::shared_ptr<Ship::ResourceInitData> initData) {
+std::shared_ptr<Ship::IResource>
+ResourceFactoryBinaryDisplayListV0::ReadResource(std::shared_ptr<Ship::File> file,
+                                                 std::shared_ptr<Ship::ResourceInitData> initData) {
     if (!FileHasValidFormatAndReader(file, initData)) {
         return nullptr;
     }
     return lugx_read_display_list(initData, std::get<std::shared_ptr<Ship::BinaryReader>>(file->Reader));
+}
+
+std::shared_ptr<Ship::IResource>
+ResourceFactoryXMLDisplayListV0::ReadResource(std::shared_ptr<Ship::File>, std::shared_ptr<Ship::ResourceInitData>) {
+    // No XML reader on console; display lists come from the binary archive.
+    return nullptr;
 }
 
 } // namespace Fast

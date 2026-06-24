@@ -2,13 +2,12 @@
 
 namespace Ship {
 
-ResourceManager::ResourceManager() : mArchiveManager(std::make_shared<ArchiveManager>()) {
+ResourceManager::ResourceManager()
+    : mArchiveManager(std::make_shared<ArchiveManager>()), mResourceLoader(std::make_shared<ResourceLoader>()) {
 }
 
 void ResourceManager::RegisterResourceFactory(uint32_t type, std::shared_ptr<ResourceFactory> factory) {
-    if (factory != nullptr) {
-        mFactories[type] = std::move(factory);
-    }
+    mResourceLoader->RegisterResourceFactory(std::move(factory), RESOURCE_FORMAT_BINARY, "", type, 0);
 }
 
 std::shared_ptr<IResource> ResourceManager::GetCachedResource(const std::string& filePath) {
@@ -61,12 +60,13 @@ std::shared_ptr<IResource> ResourceManager::LoadResource(const std::string& file
 
     file->InitData = ReadResourceInitData(filePath, file);
 
-    auto fit = mFactories.find(file->InitData->Type);
-    if (fit == mFactories.end()) {
-        return nullptr; // no factory registered for this Type
+    auto factory = mResourceLoader->GetFactory(file->InitData->Format, file->InitData->Type,
+                                               (uint32_t)file->InitData->ResourceVersion);
+    if (factory == nullptr) {
+        return nullptr; // no factory registered for this (format, type, version)
     }
 
-    auto resource = fit->second->ReadResource(file, file->InitData);
+    auto resource = factory->ReadResource(file, file->InitData);
     if (resource != nullptr) {
         mCache[filePath] = resource;
     }

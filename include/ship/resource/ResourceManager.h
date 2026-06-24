@@ -7,6 +7,7 @@
 
 #include "ship/resource/Resource.h"
 #include "ship/resource/ResourceFactory.h"
+#include "ship/resource/ResourceLoader.h"
 #include "ship/resource/File.h"
 #include "ship/resource/archive/ArchiveManager.h"
 
@@ -23,8 +24,17 @@ class ResourceManager {
 
     std::shared_ptr<ArchiveManager> GetArchiveManager() const { return mArchiveManager; }
 
-    // One factory per resource Type (FourCC, little-endian uint32 as stored).
+    // The format/type/version factory registry. A game configures it directly:
+    //   GetResourceLoader()->RegisterResourceFactory(factory, format, name, type, version);
+    std::shared_ptr<ResourceLoader> GetResourceLoader() const { return mResourceLoader; }
+
+    // Convenience shim: registers a factory for a Type FourCC as binary/version-0.
+    // Used by libultragx's own test apps; equivalent to a RESOURCE_FORMAT_BINARY,
+    // version 0 RegisterResourceFactory on the loader.
     void RegisterResourceFactory(uint32_t type, std::shared_ptr<ResourceFactory> factory);
+
+    void SetAltAssetsEnabled(bool enabled) { mAltAssetsEnabled = enabled; }
+    bool IsAltAssetsEnabled() const { return mAltAssetsEnabled; }
 
     std::shared_ptr<IResource> GetCachedResource(const std::string& filePath);
     std::shared_ptr<IResource> LoadResource(const std::string& filePath);
@@ -48,8 +58,9 @@ class ResourceManager {
                                                            std::shared_ptr<File> file);
 
     std::shared_ptr<ArchiveManager> mArchiveManager;
-    std::unordered_map<uint32_t, std::shared_ptr<ResourceFactory>> mFactories;
+    std::shared_ptr<ResourceLoader> mResourceLoader;
     std::unordered_map<std::string, std::shared_ptr<IResource>> mCache;
+    bool mAltAssetsEnabled = false;
 };
 
 } // namespace Ship

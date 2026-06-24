@@ -11,9 +11,10 @@ namespace Fast {
 // diffuse, read verbatim) into a Fast::Light. The interpreter's G_MOVEMEM
 // handler points at &light->Ambient (+8 for the diffuse) when a display list
 // loads light slots. Register against ResourceType Light (0x46669697).
-class LightFactory : public Ship::ResourceFactoryBinary {
+class ResourceFactoryBinaryLightV0 final : public Ship::ResourceFactoryBinary {
   public:
-    std::shared_ptr<Ship::IResource> ReadResource(std::shared_ptr<Ship::File> file, std::shared_ptr<Ship::ResourceInitData> initData) override;
+    std::shared_ptr<Ship::IResource> ReadResource(std::shared_ptr<Ship::File> file,
+                                                  std::shared_ptr<Ship::ResourceInitData> initData) override;
 };
 
 } // namespace Fast

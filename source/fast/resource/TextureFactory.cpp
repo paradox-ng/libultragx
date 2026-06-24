@@ -3,11 +3,12 @@
 
 namespace Fast {
 
-std::shared_ptr<Ship::IResource> TextureFactory::ReadResource(std::shared_ptr<Ship::File> file,
-                                                              std::shared_ptr<Ship::ResourceInitData> initData) {
-    if (!FileHasValidFormatAndReader(file, initData) || file->Buffer == nullptr) {
-        return nullptr;
-    }
+namespace {
+// Shared parse for both texture versions. The layout difference (V1 adds Flags +
+// scale fields) is driven by initData->ResourceVersion, which the ResourceLoader
+// sets from the resource header - so V0 and V1 dispatch here identically.
+std::shared_ptr<Ship::IResource> ReadTexture(std::shared_ptr<Ship::File> file,
+                                             std::shared_ptr<Ship::ResourceInitData> initData) {
     auto texture = std::make_shared<Texture>(initData);
     auto reader = std::get<std::shared_ptr<Ship::BinaryReader>>(file->Reader);
     const int version = initData != nullptr ? initData->ResourceVersion : 0;
@@ -28,6 +29,25 @@ std::shared_ptr<Ship::IResource> TextureFactory::ReadResource(std::shared_ptr<Sh
     texture->ImageData = reinterpret_cast<uint8_t*>(file->Buffer->data() + reader->GetBaseAddress());
 
     return texture;
+}
+} // namespace
+
+std::shared_ptr<Ship::IResource>
+ResourceFactoryBinaryTextureV0::ReadResource(std::shared_ptr<Ship::File> file,
+                                             std::shared_ptr<Ship::ResourceInitData> initData) {
+    if (!FileHasValidFormatAndReader(file, initData) || file->Buffer == nullptr) {
+        return nullptr;
+    }
+    return ReadTexture(file, initData);
+}
+
+std::shared_ptr<Ship::IResource>
+ResourceFactoryBinaryTextureV1::ReadResource(std::shared_ptr<Ship::File> file,
+                                             std::shared_ptr<Ship::ResourceInitData> initData) {
+    if (!FileHasValidFormatAndReader(file, initData) || file->Buffer == nullptr) {
+        return nullptr;
+    }
+    return ReadTexture(file, initData);
 }
 
 } // namespace Fast

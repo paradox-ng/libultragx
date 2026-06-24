@@ -46,7 +46,7 @@ int lugx_rmtest_run(void) {
 
     Ship::ResourceManager rm;
     rm.GetArchiveManager()->AddArchive(archive);
-    rm.RegisterResourceFactory(TYPE_ODLT, std::make_shared<Fast::DisplayListFactory>());
+    rm.RegisterResourceFactory(TYPE_ODLT, std::make_shared<Fast::ResourceFactoryBinaryDisplayListV0>());
     snprintf(line, sizeof(line), "archives=%u\n", (unsigned)rm.GetArchiveManager()->GetArchiveCount());
     log += line;
 

@@ -6,8 +6,8 @@
 
 namespace Fast {
 
-std::shared_ptr<Ship::IResource> VertexFactory::ReadResource(std::shared_ptr<Ship::File> file,
-                                                             std::shared_ptr<Ship::ResourceInitData> initData) {
+std::shared_ptr<Ship::IResource> ResourceFactoryBinaryVertexV0::ReadResource(std::shared_ptr<Ship::File> file,
+                                                                             std::shared_ptr<Ship::ResourceInitData> initData) {
     if (!FileHasValidFormatAndReader(file, initData)) {
         return nullptr;
     }
@@ -31,6 +31,12 @@ std::shared_ptr<Ship::IResource> VertexFactory::ReadResource(std::shared_ptr<Shi
         vertex->VertexList.push_back(data);
     }
     return vertex;
+}
+
+std::shared_ptr<Ship::IResource> ResourceFactoryXMLVertexV0::ReadResource(std::shared_ptr<Ship::File>,
+                                                                          std::shared_ptr<Ship::ResourceInitData>) {
+    // No XML reader on console; vertices come from the binary archive.
+    return nullptr;
 }
 
 } // namespace Fast
