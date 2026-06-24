@@ -16,13 +16,24 @@
 #include <cstdint>
 #include <cstring>
 
-// Forward-declare the few libogc entry points used here instead of including
-// <ogc/cache.h>/<ogc/lwp_watchdog.h>: those transitively pull <ogc/gu.h>, whose
-// Mtx typedef (f32[3][4]) collides with the N64 libultra Mtx in scope from the
-// libultra headers above.
-extern "C" void DCFlushRange(void* startaddr, uint32_t len);
-extern "C" void DCInvalidateRange(void* startaddr, uint32_t len);
-extern "C" uint64_t gettime(void);
+// <ogc/cache.h> is clean (no <ogc/gu.h>, so no Mtx collision with the libultra Mtx)
+// and provides the real DCFlushRange/DCInvalidateRange cache ops.
+#include <ogc/cache.h>
+
+namespace {
+// Read the 64-bit PPC time base directly, rather than libogc's gettime() whose
+// header (<ogc/lwp_watchdog.h> -> ogcsys -> gccore -> gu.h) would collide with the
+// N64 Mtx.
+inline uint64_t ReadTimeBase() {
+    uint32_t hi, lo, tmp;
+    do {
+        __asm__ volatile("mftbu %0" : "=r"(hi));
+        __asm__ volatile("mftb %0" : "=r"(lo));
+        __asm__ volatile("mftbu %0" : "=r"(tmp));
+    } while (hi != tmp);
+    return ((uint64_t)hi << 32) | lo;
+}
+} // namespace
 
 extern "C" {
 
@@ -86,7 +97,7 @@ uint32_t osVirtualToPhysical(void* vaddr) {
 // ---- Time ----
 
 uint64_t osGetTime(void) {
-    return gettime();
+    return ReadTimeBase();
 }
 
 // ---- Data cache (real ops; the game uses these around audio DMA buffers) ----
