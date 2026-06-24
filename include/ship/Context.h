@@ -14,6 +14,7 @@ class ConsoleVariable;
 class Window;
 class ControlDeck;
 class Console;
+class EventSystem;
 
 // Lean GameCube/Wii reimplementation of libultraship's Ship::Context.
 //
@@ -75,6 +76,7 @@ class Context {
     std::shared_ptr<Window> GetWindow() const;
     std::shared_ptr<ControlDeck> GetControlDeck() const;
     std::shared_ptr<Console> GetConsole() const;
+    std::shared_ptr<EventSystem> GetEventSystem();
     std::string GetName() const;
 
   private:
@@ -83,6 +85,7 @@ class Context {
     std::shared_ptr<Window> mWindow;
     std::shared_ptr<ControlDeck> mControlDeck;
     std::shared_ptr<Console> mConsole;
+    std::shared_ptr<EventSystem> mEventSystem;
     std::string mName;
     std::string mConfigName;
 };

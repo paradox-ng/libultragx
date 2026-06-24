@@ -6,6 +6,7 @@
 #include "ship/resource/archive/O2rArchive.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/window/Window.h"
+#include "ship/events/EventSystem.h"
 
 #include <sys/stat.h>
 #include <utility>
@@ -130,7 +131,15 @@ bool Context::InitWindow(std::shared_ptr<Window> window) {
 }
 
 bool Context::InitEventSystem() {
+    GetEventSystem(); // lazily create the dispatcher
     return true;
+}
+
+std::shared_ptr<EventSystem> Context::GetEventSystem() {
+    if (mEventSystem == nullptr) {
+        mEventSystem = std::make_shared<EventSystem>();
+    }
+    return mEventSystem;
 }
 
 bool Context::InitScriptLoader(std::unordered_map<std::string, std::string> /*compileDefines*/, int /*codeVersion*/,
