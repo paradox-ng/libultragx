@@ -10,6 +10,8 @@
 #include <malloc.h>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
+#include <unistd.h>
 
 namespace Fast {
 
@@ -246,15 +248,36 @@ static inline u8 float_to_u8(float f) {
     return (u8)(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
 
+// BISECT: when set, skip all GX drawing (no FIFO writes) to test whether the
+// frame-1 render hang lives in the triangle/GP submission path. Defined in Game.cpp.
+extern "C" int g_gx_skip_draw;
+extern "C" int g_gx_skip_geom; // BISECT: skip only GX_Begin/vertices/GX_End (keep state-setting)
+extern "C" int g_gx_stop_at;   // BISECT: stop after stage N (1=TEV 2=vtxdesc 3=mtx 4=chan 5=full)
+extern "C" void bootlog(const char*);
+extern "C" void bootflush(void);
+
+volatile unsigned g_dt_total = 0;     // total triangle batches submitted (gdb-readable)
+volatile unsigned g_dt_lastverts = 0; // verts of the most recent batch
+
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     (void)buf_vbo_len;
-    if (mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
+    if (g_gx_skip_draw || mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
         return;
     }
+    g_dt_total++;
+    g_dt_lastverts = (unsigned)(buf_vbo_num_tris * 3);
+    // BISECT: log every DrawTriangles call's params; the last "dt#N" before the SD
+    // budget/hang is the batch that stalls the GP. Sub-step trace off (dz=false).
+    static int dtc = 0;
+    bool dz = false; // frame-1 draw confirmed to complete; trace moved downstream
+    char dzb[48];
+#define DZ(tag) do { if (dz) { snprintf(dzb, sizeof(dzb), "dt %s", tag); bootlog(dzb); bootflush(); } } while (0)
     const CCFeatures& cc = mCurrentShader->features;
 
     // Drive the TEV stage(s) from the decoded combiner + resolved constant colours.
     lugx_tev_from_features(&cc, mCombinerUniforms.inputs);
+    DZ("post-tev");
+    if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
 
     // Per-vertex float layout (mirrors Interpreter::GfxSpTri1):
     //   x,y,z,w, mtx_slot, [u,v per used tile], shade(3 rgb | 3 normal)[+1 a]
@@ -262,6 +285,11 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // packing) rather than predicting it - opt_alpha etc. can shift it.
     const int numTex = (cc.usedTextures[0] ? 1 : 0) + (cc.usedTextures[1] ? 1 : 0);
     const bool lighting = cc.opt_lighting;
+    if (false) { // draw counter off; presents counted in SwapBuffersEnd
+        snprintf(dzb, sizeof(dzb), "dt#%d v=%u", dtc, (unsigned)(buf_vbo_num_tris * 3));
+        bootlog(dzb);
+        bootflush();
+    }
     const int stride = (int)(buf_vbo_len / (buf_vbo_num_tris * 3));
     const int texOff = 5;
     const int shadeOff = 5 + 2 * numTex;
@@ -304,6 +332,8 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     } else {
         GX_SetNumTexGens(0);
     }
+    DZ("post-tex");
+    if (g_gx_stop_at == 2) { dtc++; return; }
 
     // GX T&L matrix path (piece 5): the vbo carries object-space positions and a
     // matrix-palette slot. The interpreter's mtx_palette[slot] is the combined MVP
@@ -339,6 +369,8 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
     }
     GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
+    DZ("post-mtx");
+    if (g_gx_stop_at == 3) { dtc++; return; }
 
     // Lighting channel. N64 lit shade = matWhite * (ambient + sum_i lightCol_i *
     // max(0, N . dirToLight_i)). GX gives exactly that with GX_DF_CLAMP + GX_AF_NONE,
@@ -382,8 +414,28 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_VTX, GX_SRC_VTX, 0, GX_DF_NONE, GX_AF_NONE);
     }
 
+    DZ("post-light");
+    if (g_gx_stop_at == 4) { dtc++; return; }
     const size_t verts = buf_vbo_num_tris * 3;
+    if (dz) {
+        // Scan ALL vertex coords for NaN/Inf/huge (GP rasteriser stalls on those).
+        int bad = 0;
+        for (size_t i = 0; i < verts; i++) {
+            const float* vv = &buf_vbo[i * (size_t)stride];
+            for (int k = 0; k < 3; k++) {
+                unsigned b = *(unsigned*)&vv[k];
+                unsigned e = (b >> 23) & 0xFFu;
+                if (e == 0xFFu) { bad++; } // NaN/Inf
+            }
+        }
+        snprintf(dzb, sizeof(dzb), "dt verts=%u stride=%d sN=%d sC=%d bad=%d", (unsigned)verts, stride,
+                 (int)submitNormal, (int)submitColor, bad);
+        bootlog(dzb);
+        bootflush();
+    }
+    if (g_gx_skip_geom) { dtc++; return; } // BISECT: state set, but no geometry submitted
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
+    if (dz) { bootlog("dt after-Begin"); bootflush(); }
     for (size_t i = 0; i < verts; i++) {
         const float* v = &buf_vbo[i * (size_t)stride];
         GX_Position3f32(v[0], v[1], v[2]);
@@ -404,7 +456,11 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             GX_TexCoord2f32(us, vt);
         }
     }
+    if (dz) { bootlog("dt after-verts"); bootflush(); }
     GX_End();
+    DZ("post-end");
+    dtc++;
+#undef DZ
 }
 
 void GfxRenderingAPIGX::DrawBringupTriangle() {

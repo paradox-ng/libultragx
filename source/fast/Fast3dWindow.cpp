@@ -5,6 +5,12 @@
 
 #include "fast/Fast3dWindow.h"
 
+#include <ogc/irq.h> // BISECT: IRQ_Disable/IRQ_Restore
+
+// TEMP boot bring-up trace hooks (defined in the game's Game.cpp).
+extern "C" void bootlog(const char*);
+extern "C" void bootflush(void);
+
 namespace Fast {
 
 // Defined in the GX translation units (gfx_gx_api.cpp / gfx_gx_window.cpp); declared
@@ -68,9 +74,16 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     // Render straight to the screen for now (the interpreter framebuffer path needs
     // GX EFB-as-texture support our backend still stubs).
     mInterpreter->mRendersToFb = false;
+    // TEMP boot bring-up trace (first 2 frames only).
+    static int dr = 0;
+    bool dt = false; // BISECT: fine trace off
     mInterpreter->StartFrame();
+    if (dt) { bootlog("  dr pre-Run"); bootflush(); }
     mInterpreter->Run(commands, mtxReplacements, dlReplacements);
+    if (dt) { bootlog("  dr pre-EndFrame"); bootflush(); }
     mInterpreter->EndFrame();
+    if (dt) { bootlog("  dr post-EndFrame"); bootflush(); }
+    dr++;
     return true;
 }
 

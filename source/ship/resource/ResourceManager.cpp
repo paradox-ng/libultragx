@@ -1,3 +1,4 @@
+#include <cstring>
 #include "ship/resource/ResourceManager.h"
 
 namespace Ship {
@@ -104,8 +105,19 @@ void* ResourceManager::GetResourceRawPointer(std::shared_ptr<IResource> resource
     return resource != nullptr ? resource->GetRawPointer() : nullptr;
 }
 
-bool ResourceManager::OtrSignatureCheck(const char* /*fileName*/) {
-    return false;
+// True when `data` is a resource REFERENCE (the game tags them with a 7-char
+// "__OTR__" prefix) rather than raw data. Callers (LOAD_ASSET, process_geo_layout,
+// the gfx/texture middleware) use this to decide whether to resolve the reference
+// through the resource manager. Returning false unconditionally left every __OTR__
+// reference unresolved: e.g. process_geo_layout then ran the literal "__OTR__..."
+// string as geo bytecode (cmdId '_' = 0x5F indexes past GeoLayoutJumpTable) and
+// hung in an infinite dispatch loop.
+bool ResourceManager::OtrSignatureCheck(const char* fileName) {
+    static const char kOtrPrefix[] = "__OTR__";
+    if (fileName == nullptr) {
+        return false;
+    }
+    return std::strncmp(fileName, kOtrPrefix, sizeof(kOtrPrefix) - 1) == 0;
 }
 
 } // namespace Ship

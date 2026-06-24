@@ -5,9 +5,15 @@
 #include <ogc/lwp_watchdog.h> // gettime / ticks_to_microsecs
 #include <malloc.h>
 #include <string.h>
+#include <cstdio>
+#include <unistd.h>
 #ifdef HW_RVL
 #include <wiiuse/wpad.h>
 #endif
+
+// TEMP boot bring-up trace hooks (defined in the game's Game.cpp).
+extern "C" void bootlog(const char*);
+extern "C" void bootflush(void);
 
 namespace Fast {
 

@@ -2,6 +2,8 @@
 
 #include "fast/cc_features.h"
 
+extern "C" int g_gx_stop_at; // BISECT: 10 = minimal hardcoded TEV (skip decoded config)
+
 // ---------------------------------------------------------------------------
 // CCFeatures -> GX TEV (the modern path).
 //
@@ -92,6 +94,12 @@ void lugx_tev_from_features(const CCFeatures* cc, const float inputs[6][4]) {
     // One channel: the rasterized colour is the per-vertex shade (no HW lighting yet).
     GX_SetNumChans(1);
     GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_VTX, GX_SRC_VTX, GX_LIGHTNULL, GX_DF_NONE, GX_AF_NONE);
+
+    if (g_gx_stop_at == 10) { // BISECT: minimal valid TEV, skip decoded combiner config
+        GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+        GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+        return;
+    }
 
     const int* col = cc->c[0][0]; // color A,B,C,D
     const int* alp = cc->c[0][1]; // alpha A,B,C,D
