@@ -1,12 +1,19 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace Ship {
 
 class ResourceManager;
 class ConsoleVariable;
+class Window;
+class ControlDeck;
+class Console;
 
 // Lean GameCube/Wii reimplementation of libultraship's Ship::Context.
 //
@@ -40,9 +47,44 @@ class Context {
 
     static std::string GetShortName();
 
+    // --- Boot lifecycle (Ghostship integration, increment 1) ------------------
+    // The game's GameEngine() calls CreateUninitializedInstance() then drives the
+    // Init* subsystems one by one (it does NOT use the combined Init()/CreateInstance
+    // path). Signatures match the calls in Ghostship src/port/Engine.cpp so the game
+    // links unchanged. ResourceManager/CVars wire to the real lean subsystems; the
+    // rest (ControlDeck/Window/Console/EventSystem/ScriptLoader) store-and-succeed
+    // for now - their real backends (Fast3dWindow over GX, PAD/WPAD ControlDeck, ...)
+    // land in later increments.
+    static std::shared_ptr<Context> CreateUninitializedInstance(const std::string& name, const std::string& shortName,
+                                                                const std::string& configName);
+
+    bool InitConfiguration();
+    bool InitConsoleVariables();
+    // spdlog::level::level_enum passes through as int (the game computes it from spdlog).
+    bool InitLogging(int debugBuildLogLevel = 0, int releaseBuildLogLevel = 0);
+    bool InitResourceManager(const std::vector<std::string>& archivePaths = {},
+                             const std::unordered_set<uint32_t>& validHashes = {}, uint32_t reservedThreadCount = 1);
+    bool InitControlDeck(std::shared_ptr<ControlDeck> controlDeck = nullptr);
+    bool InitConsole();
+    bool InitWindow(std::shared_ptr<Window> window = nullptr);
+    bool InitEventSystem();
+    bool InitScriptLoader(std::unordered_map<std::string, std::string> compileDefines = {}, int codeVersion = 1,
+                          std::string compileFlags = "", std::vector<std::string> includePaths = {},
+                          std::vector<std::string> libraryPaths = {}, std::vector<std::string> libraries = {});
+
+    std::shared_ptr<Window> GetWindow() const;
+    std::shared_ptr<ControlDeck> GetControlDeck() const;
+    std::shared_ptr<Console> GetConsole() const;
+    std::string GetName() const;
+
   private:
     std::shared_ptr<ResourceManager> mResourceManager;
     std::shared_ptr<ConsoleVariable> mConsoleVariables;
+    std::shared_ptr<Window> mWindow;
+    std::shared_ptr<ControlDeck> mControlDeck;
+    std::shared_ptr<Console> mConsole;
+    std::string mName;
+    std::string mConfigName;
 };
 
 } // namespace Ship
