@@ -13,6 +13,11 @@
 #include "libultraship/libultra/controller.h"
 #include "libultraship/libultra/pfs.h"
 
+// Controller input is owned by the ControlDeck (reads the live GC/Wii pad). Both
+// headers are pure ship-side C++ - no <ogc/gu.h>, so no GX-Mtx collision here.
+#include "ship/Context.h"
+#include "ship/controller/controldeck/ControlDeck.h"
+
 #include <cstdint>
 #include <cstring>
 
@@ -132,8 +137,18 @@ int32_t osContStartReadData(OSMesgQueue* /*mq*/) {
 }
 
 void osContGetReadData(OSContPad* pad) {
-    if (pad != nullptr) {
-        std::memset(pad, 0, sizeof(OSContPad)); // real input comes via the ControlDeck
+    if (pad == nullptr) {
+        return;
+    }
+    // Pull the live pad through the ControlDeck. WriteToPad refreshes all
+    // MAXCONTROLLERS entries (matching the game's gControllerPads[] array) from the
+    // GameCube/Wii hardware. Before the ControlDeck exists, report neutral input.
+    auto ctx = Ship::Context::GetInstance();
+    auto deck = ctx != nullptr ? ctx->GetControlDeck() : nullptr;
+    if (deck != nullptr) {
+        deck->WriteToPad(pad);
+    } else {
+        std::memset(pad, 0, sizeof(OSContPad));
     }
 }
 

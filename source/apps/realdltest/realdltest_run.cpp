@@ -36,6 +36,14 @@ namespace Fast {
 void GfxSetInstance(std::shared_ptr<Interpreter> gfx);
 }
 
+// BISECT debug toggles the GX backend references; the game defines them in Game.cpp,
+// the standalone test provides its own (all off).
+extern "C" {
+int g_gx_skip_draw = 0;
+int g_gx_skip_geom = 0;
+int g_gx_stop_at = 0;
+}
+
 // Column-vector matrix helpers (clip = M * v).
 static void mat_identity(float m[4][4]) {
     memset(m, 0, sizeof(float) * 16);
@@ -75,7 +83,7 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
     if (lugx_sd_mount() != nullptr) {
         auto rm = Ship::Context::GetInstance()->GetResourceManager();
         auto archive = std::make_shared<Ship::O2rArchive>();
-        if (archive->Open("sd:/sm64.o2r")) {
+        if (archive->Open("sd:/libultragx/sm64.o2r")) {
             rm->GetArchiveManager()->AddArchive(archive);
             rm->RegisterResourceFactory(0x4F444C54u, std::make_shared<Fast::ResourceFactoryBinaryDisplayListV0>()); // ODLT
             rm->RegisterResourceFactory(0x4F565458u, std::make_shared<Fast::ResourceFactoryBinaryVertexV0>());       // OVTX
@@ -141,7 +149,17 @@ int lugx_realdltest_run(Fast::GfxWindowBackend* wapi, Fast::GfxRenderingAPI* rap
             // Identity modelview[0]: the interpreter transforms normals + light
             // directions by it (lighting space). Position uses MP_matrix, not this.
             mat_identity(interp->mRsp->modelview_matrix_stack[0]);
-            memcpy(interp->mRsp->MP_matrix, mpT, sizeof(mpT)); // DL doesn't set a projection
+            // Bake the camera-back into the MVP so the backend's software-clip path
+            // (transforms each vertex by its full palette MVP) frames the torso. MVP =
+            // camera-back * perspective in the interpreter's row-vector convention:
+            // rows 0-2 are the perspective's; row 3 = CAMERA_Z*P_row2 + P_row3.
+            const float CAMERA_Z = -400.0f;
+            float MVP[4][4];
+            memcpy(MVP, mpT, sizeof(MVP));
+            for (int j = 0; j < 4; j++) {
+                MVP[3][j] = CAMERA_Z * mpT[2][j] + mpT[3][j];
+            }
+            memcpy(interp->mRsp->MP_matrix, MVP, sizeof(MVP));
             interp->Run(dl, mtxRepl, dlRepl);
         }
 #else

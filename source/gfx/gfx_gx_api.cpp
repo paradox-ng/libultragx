@@ -195,7 +195,16 @@ FilteringMode GfxRenderingAPIGX::GetTextureFilter() {
 
 // --- render state --------------------------------------------------------------
 
+// Last render state the interpreter set (it only re-issues these on CHANGE, so a
+// mid-frame ClearFramebuffer that clobbers GX depth/blend must restore them, else the
+// interpreter won't and the next draws inherit the clear's state).
+static bool sLastDepthTest = false;
+static bool sLastDepthMask = false;
+static bool sLastBlend = false;
+
 void GfxRenderingAPIGX::SetDepthTestAndMask(bool depth_test, bool z_upd) {
+    sLastDepthTest = depth_test;
+    sLastDepthMask = z_upd;
     lugx_set_depth(depth_test, z_upd);
 }
 
@@ -218,6 +227,7 @@ void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
 }
 
 void GfxRenderingAPIGX::SetUseAlpha(bool useAlpha) {
+    sLastBlend = useAlpha;
     lugx_set_blend(useAlpha);
 }
 
@@ -266,8 +276,6 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     }
     g_dt_total++;
     g_dt_lastverts = (unsigned)(buf_vbo_num_tris * 3);
-    // BISECT: log every DrawTriangles call's params; the last "dt#N" before the SD
-    // budget/hang is the batch that stalls the GP. Sub-step trace off (dz=false).
     static int dtc = 0;
     bool dz = false; // frame-1 draw confirmed to complete; trace moved downstream
     char dzb[48];
@@ -347,28 +355,61 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     if (slot0 < 0 || slot0 >= GFX_MTX_PALETTE_SIZE) {
         slot0 = 0;
     }
-    Mtx mv;
-    for (int r = 0; r < 3; r++) {
-        for (int c = 0; c < 4; c++) {
-            mv[r][c] = sGxViewMtx[r][c];
+    // Detect 2D vs 3D by transforming v0's w through its slot matrix: 2D rects come
+    // pre-transformed to clip space with an identity palette matrix (w stays 1); 3D
+    // geometry has w = camera depth != 1. 3D uses the Wii-port software-clip technique
+    // (transform each vertex in the loop, feed GX clip coords + a pass-through
+    // perspective) which handles the camera-baked + per-object MVPs GX_LoadProjectionMtx
+    // can't. 2D keeps the proven single-matrix-as-projection path.
+    // 3D vs 2D from the MATRIX's W column (col 3), not a single vertex's w (fragile):
+    // 2D rects / orthographic come pre-transformed with MP_col3 == [0,0,0,1]; a
+    // perspective MVP has MP_col3 = -modelview_col2 (a non-trivial direction - the
+    // perspective W coupling, which is in [0][3]/[1][3] for a horizontal camera, not
+    // just [2][3]). Non-trivial W column -> 3D -> software-clip.
+    const float(*Mc)[4] = mTransform.mtx_palette[slot0];
+    const bool swclip = (Mc[0][3] < -0.001f || Mc[0][3] > 0.001f || Mc[1][3] < -0.001f || Mc[1][3] > 0.001f ||
+                         Mc[2][3] < -0.001f || Mc[2][3] > 0.001f || Mc[3][3] < 0.999f || Mc[3][3] > 1.001f);
+    if (swclip) {
+        Mtx ident;
+        guMtxIdentity(ident);
+        GX_LoadPosMtxImm(ident, GX_PNMTX0);
+        // Fixed pass-through perspective (built once): GX computes W = -z_in and maps a
+        // w-buffered depth in [n,f] to NDC z [-1,0]. n/f are SM64's.
+        static Mtx44 sPassPersp;
+        static bool sPassBuilt = false;
+        if (!sPassBuilt) {
+            const float n = 16.0f, f = 24000.0f;
+            memset(sPassPersp, 0, sizeof(sPassPersp));
+            sPassPersp[0][0] = 1.0f;
+            sPassPersp[1][1] = 1.0f;
+            sPassPersp[2][2] = -n / (f - n);
+            sPassPersp[2][3] = -(n * f) / (f - n);
+            sPassPersp[3][2] = -1.0f;
+            sPassBuilt = true;
         }
-    }
-    GX_LoadPosMtxImm(mv, GX_PNMTX0);
-    Mtx44 proj;
-    // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),
-    // so GX needs the transpose.
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 4; c++) {
-            proj[r][c] = mTransform.mtx_palette[slot0][c][r];
+        GX_LoadProjectionMtx(sPassPersp, GX_PERSPECTIVE);
+    } else {
+        Mtx mv;
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 4; c++) {
+                mv[r][c] = sGxViewMtx[r][c];
+            }
         }
+        GX_LoadPosMtxImm(mv, GX_PNMTX0);
+        Mtx44 proj;
+        // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),
+        // so GX needs the transpose.
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                proj[r][c] = mTransform.mtx_palette[slot0][c][r];
+            }
+        }
+        // Clip-z remap: GL-convention NDC z [-1,1] -> GX z [-1,0].
+        for (int c = 0; c < 4; c++) {
+            proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
+        }
+        GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
     }
-    // Clip-z remap: the interpreter/games supply GL-convention matrices (NDC z in
-    // [-1,1]); GX's NDC z is [-1,0]. Map z' = 0.5*z - 0.5*w (this turns a GL
-    // perspective into exactly libogc guPerspective's GX matrix).
-    for (int c = 0; c < 4; c++) {
-        proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
-    }
-    GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
     DZ("post-mtx");
     if (g_gx_stop_at == 3) { dtc++; return; }
 
@@ -434,11 +475,9 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         bootflush();
     }
     if (g_gx_skip_geom) { dtc++; return; } // BISECT: state set, but no geometry submitted
-    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
-    if (dz) { bootlog("dt after-Begin"); bootflush(); }
-    for (size_t i = 0; i < verts; i++) {
-        const float* v = &buf_vbo[i * (size_t)stride];
-        GX_Position3f32(v[0], v[1], v[2]);
+    // Emit one vertex's NON-position attributes (normal/colour/texcoord), shared by
+    // both the 2D and the software-clipped 3D paths.
+    auto emitAttribs = [&](const float* v) {
         if (submitNormal) {
             GX_Normal3f32(v[shadeOff + 0], v[shadeOff + 1], v[shadeOff + 2]);
         }
@@ -448,16 +487,87 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
                         float_to_u8(v[shadeOff + 2]), a);
         }
         if (numTex > 0) {
-            // Apply the per-draw UV transform (raw RSP texcoord -> normalized GX
-            // texcoord): uv = raw * scale + offset (CombinerUniforms.uv_transform).
+            // Per-draw UV transform (raw RSP texcoord -> normalized GX texcoord):
+            // uv = raw * scale + offset (CombinerUniforms.uv_transform).
             const float* uvt = mCombinerUniforms.uv_transform[0];
-            float us = v[texOff + 0] * uvt[0] + uvt[1];
-            float vt = v[texOff + 1] * uvt[2] + uvt[3];
-            GX_TexCoord2f32(us, vt);
+            GX_TexCoord2f32(v[texOff + 0] * uvt[0] + uvt[1], v[texOff + 1] * uvt[2] + uvt[3]);
         }
+    };
+
+    if (swclip) {
+        // 3D path. Transform each vertex by its slot's MVP to clip space and feed GX
+        // clip coords (the pass-through perspective does only the divide). Per the wii
+        // port's gfx_sp_tri1: compute each vertex's clip_rej (which frustum plane it is
+        // outside of, from the REAL pre-clamp w) and DROP any triangle whose 3 vertices
+        // are all outside the SAME plane. Without this, off-screen / behind-camera
+        // triangles get w-clamped and fling across the screen (the "vertex explosion").
+        // Two passes: GX_Begin needs the exact kept-vertex count up front.
+        auto clipRej = [&](const float* v) -> unsigned {
+            int s = (int)v[4];
+            if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
+                s = 0;
+            }
+            const float(*M)[4] = mTransform.mtx_palette[s];
+            const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
+            const float cx = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
+            const float cy = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
+            const float cz = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + ow * M[3][2];
+            const float cw = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
+            unsigned r = 0;
+            if (cx < -cw) r |= 1u;
+            if (cx > cw) r |= 2u;
+            if (cy < -cw) r |= 4u;
+            if (cy > cw) r |= 8u;
+            if (cz < -cw) r |= 16u;
+            if (cz > cw) r |= 32u;
+            return r;
+        };
+        const size_t nTris = buf_vbo_num_tris;
+        size_t kept = 0;
+        for (size_t t = 0; t < nTris; t++) {
+            const float* a = &buf_vbo[(t * 3 + 0) * (size_t)stride];
+            const float* b = &buf_vbo[(t * 3 + 1) * (size_t)stride];
+            const float* c = &buf_vbo[(t * 3 + 2) * (size_t)stride];
+            if (!(clipRej(a) & clipRej(b) & clipRej(c))) {
+                kept++;
+            }
+        }
+        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kept * 3));
+        for (size_t t = 0; t < nTris; t++) {
+            const float* tri[3] = { &buf_vbo[(t * 3 + 0) * (size_t)stride],
+                                    &buf_vbo[(t * 3 + 1) * (size_t)stride],
+                                    &buf_vbo[(t * 3 + 2) * (size_t)stride] };
+            if (clipRej(tri[0]) & clipRej(tri[1]) & clipRej(tri[2])) {
+                continue; // whole triangle outside one frustum plane
+            }
+            for (int k = 0; k < 3; k++) {
+                const float* v = tri[k];
+                int s = (int)v[4];
+                if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
+                    s = 0;
+                }
+                const float(*M)[4] = mTransform.mtx_palette[s];
+                const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
+                const float cx = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
+                const float cy = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
+                float cw = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
+                if (cw < 0.001f) {
+                    cw = 0.001f;
+                }
+                GX_Position3f32(cx, cy, -cw);
+                emitAttribs(v);
+            }
+        }
+        GX_End();
+    } else {
+        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
+        for (size_t i = 0; i < verts; i++) {
+            const float* v = &buf_vbo[i * (size_t)stride];
+            GX_Position3f32(v[0], v[1], v[2]);
+            emitAttribs(v);
+        }
+        GX_End();
     }
-    if (dz) { bootlog("dt after-verts"); bootflush(); }
-    GX_End();
     DZ("post-end");
     dtc++;
 #undef DZ
@@ -587,8 +697,67 @@ void GfxRenderingAPIGX::CopyFramebuffer(int fbDstId, int fbSrcId, int srcX0, int
 }
 
 void GfxRenderingAPIGX::ClearFramebuffer(bool color, bool depth) {
-    (void)color; (void)depth;
-    // The EFB is cleared by GX_CopyDisp at frame end (GX_SetCopyClear).
+    (void)color; // colour is cleared by GX_CopyDisp's EFB clear each frame; a full-
+                 // screen colour fill here wipes the HUD/level. We only need DEPTH.
+    if (!depth) {
+        return;
+    }
+    // GX has no direct mid-frame EFB clear (GX_CopyDisp clears, but it also copies the
+    // EFB out to the XFB - we can't present mid-frame). The game clears the depth buffer
+    // BETWEEN passes (e.g. a depth-only clear before the 3D world; interpreter.cpp
+    // ClearFramebuffer(false,true)); ignoring it left stale near-depth that made the 3D
+    // fail LEQUAL and vanish. So reset Z by drawing a full-screen quad at the FAR plane
+    // with colour writes OFF (depth only) so later geometry passes LEQUAL.
+    GX_SetColorUpdate(GX_FALSE);
+    GX_SetAlphaUpdate(GX_FALSE);
+    GX_SetZMode(GX_TRUE, GX_ALWAYS, GX_TRUE);
+    GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
+
+    // Orthographic, identity: clip.z = z-1, clip.w = 1, so z=1 -> NDC z 0 = GX far.
+    static Mtx44 sClearOrtho;
+    static bool sClearOrthoBuilt = false;
+    if (!sClearOrthoBuilt) {
+        memset(sClearOrtho, 0, sizeof(sClearOrtho));
+        sClearOrtho[0][0] = 1.0f;
+        sClearOrtho[1][1] = 1.0f;
+        sClearOrtho[2][2] = 1.0f;
+        sClearOrtho[2][3] = -1.0f;
+        sClearOrtho[3][3] = 1.0f;
+        sClearOrthoBuilt = true;
+    }
+    GX_LoadProjectionMtx(sClearOrtho, GX_ORTHOGRAPHIC);
+    Mtx ident;
+    guMtxIdentity(ident);
+    GX_LoadPosMtxImm(ident, GX_PNMTX0);
+
+    // Flat-colour TEV (the clear colour rides COLOR0 as the material).
+    GX_SetNumChans(1);
+    GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_REG, GX_LIGHTNULL, GX_DF_NONE, GX_AF_NONE);
+    GXColor clr = { 0, 0, 0, 255 }; // TODO: the game's actual clear colour
+    GX_SetChanMatColor(GX_COLOR0A0, clr);
+    GX_SetNumTexGens(0);
+    GX_SetNumTevStages(1);
+    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+    GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+
+    GX_ClearVtxDesc();
+    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    const float Z = 1.0f; // -> GX far depth
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 6);
+    GX_Position3f32(-1.0f, -1.0f, Z);
+    GX_Position3f32(1.0f, -1.0f, Z);
+    GX_Position3f32(-1.0f, 1.0f, Z);
+    GX_Position3f32(-1.0f, 1.0f, Z);
+    GX_Position3f32(1.0f, -1.0f, Z);
+    GX_Position3f32(1.0f, 1.0f, Z);
+    GX_End();
+
+    // Restore the interpreter's render state (it won't re-issue unchanged state).
+    GX_SetColorUpdate(GX_TRUE);
+    GX_SetAlphaUpdate(GX_TRUE);
+    GX_SetZMode(sLastDepthTest ? GX_TRUE : GX_FALSE, GX_LEQUAL, sLastDepthMask ? GX_TRUE : GX_FALSE);
+    lugx_set_blend(sLastBlend);
 }
 
 void GfxRenderingAPIGX::ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) {
