@@ -284,6 +284,11 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
 
     // Drive the TEV stage(s) from the decoded combiner + resolved constant colours.
     lugx_tev_from_features(&cc, mCombinerUniforms.inputs);
+    // Alpha test (cutout). The N64 discards near-transparent texels via the alpha
+    // compare for text glyphs and texture-edge cutouts; the interpreter only encodes
+    // this for the GL shader's discard, so GX must apply it here or the transparent
+    // texels render opaque (a solid rectangle around text, broken cutouts).
+    lugx_set_alpha_test(cc.opt_alpha_threshold || cc.opt_texture_edge, 128);
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
 
