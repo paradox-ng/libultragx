@@ -44,6 +44,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     FilteringMode GetTextureFilter() override;
 
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
+    void SetCullMode(int8_t keepSign) override;
     void SetZmodeDecal(bool decal) override;
     void SetStrictDecal(bool on) override;
     void SetViewport(int x, int y, int width, int height) override;
@@ -105,6 +106,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     FilteringMode mFilterMode = FILTER_THREE_POINT;
     ShaderProgram* mCurrentShader = nullptr;
     std::unordered_map<uint64_t, ShaderProgram*> mShaderCache; // keyed by shaderId0 (id1 folded in)
+    int8_t mCullKeepSign = 0;             // 0 none, +1 keep cross>0 (G_CULL_FRONT), -1 keep cross<0 (G_CULL_BACK)
     CombinerUniforms mCombinerUniforms{}; // latest resolved constants (prim/env/...)
     TransformUniforms mTransform{};       // latest matrix palette (combined MVP per slot)
     LightingUniforms mLighting{};         // latest lights/ambient for HW lighting
