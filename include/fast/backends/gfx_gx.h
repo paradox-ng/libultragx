@@ -92,9 +92,10 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
 
   private:
     struct GxTexture {
-        void* data = nullptr; // tiled GX_TF_RGBA8 data in main RAM
+        void* data = nullptr; // tiled GX data in main RAM (format per fmt)
         u32 width = 0;
         u32 height = 0;
+        u8 fmt = GX_TF_RGBA8; // GX texel format the data is tiled in
         bool linearFilter = false;
         u8 wrapS = 0; // GX_REPEAT / GX_CLAMP / GX_MIRROR
         u8 wrapT = 0;

@@ -125,6 +125,10 @@ void GfxRenderingAPIGX::ShaderGetInfo(ShaderProgram* prg, uint8_t* numInputs, bo
 
 // --- textures ------------------------------------------------------------------
 
+// Count of texture uploads that failed because the heap was exhausted. Non-zero
+// means we are running out of texture RAM (see UploadTexture).
+int g_gx_tex_oom = 0;
+
 uint32_t GfxRenderingAPIGX::NewTexture() {
     mTextures.emplace_back();
     return (uint32_t)(mTextures.size() - 1);
@@ -146,16 +150,30 @@ void GfxRenderingAPIGX::UploadTexture(const uint8_t* rgba32Buf, uint32_t width, 
         return;
     }
     GxTexture& t = mTextures[id];
-    // TODO: handle width/height not divisible by 4 (pad to the GX 4x4 tile size).
-    size_t sz = (size_t)width * height * 4;
+    // Store as GX_TF_RGB5A3 (16-bit): half the RAM and GP texture bandwidth of
+    // RGBA8, and lossless for the N64's dominant RGBA16 textures. Size for the
+    // tile-aligned (multiple-of-4) dimensions so the tiled write stays in bounds.
+    const uint32_t padW = (width + 3u) & ~3u;
+    const uint32_t padH = (height + 3u) & ~3u;
+    size_t sz = (size_t)padW * padH * 2;
+    // Allocate the new buffer BEFORE freeing the old one: if the heap is exhausted
+    // (e.g. a dialog loads its font + box textures on top of the level), memalign
+    // returns null. Binding a null texture makes GX read garbage and corrupts the
+    // draw, so on failure keep the previous data and count it instead.
+    void* newData = memalign(32, sz);
+    if (newData == nullptr) {
+        g_gx_tex_oom++;
+        return;
+    }
     if (t.data != nullptr) {
         free(t.data);
     }
-    t.data = memalign(32, sz);
-    lugx_tex_rgba32_to_gx_rgba8(rgba32Buf, (u8*)t.data, width, height);
+    t.data = newData;
+    lugx_tex_rgba32_to_gx_rgb5a3(rgba32Buf, (u8*)t.data, width, height);
     DCFlushRange(t.data, sz);
     t.width = width;
     t.height = height;
+    t.fmt = GX_TF_RGB5A3;
 }
 
 void GfxRenderingAPIGX::SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) {
@@ -369,7 +387,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         if (tid < mTextures.size() && mTextures[tid].data != nullptr) {
             GxTexture& t = mTextures[tid];
             GXTexObj obj;
-            GX_InitTexObj(&obj, t.data, (u16)t.width, (u16)t.height, GX_TF_RGBA8, t.wrapS, t.wrapT, GX_FALSE);
+            GX_InitTexObj(&obj, t.data, (u16)t.width, (u16)t.height, t.fmt, t.wrapS, t.wrapT, GX_FALSE);
             u8 filt = t.linearFilter ? GX_LINEAR : GX_NEAR;
             GX_InitTexObjFilterMode(&obj, filt, filt);
             GX_LoadTexObj(&obj, GX_TEXMAP0);

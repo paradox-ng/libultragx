@@ -13,3 +13,7 @@
 // dst must be 32-byte aligned and w*h*4 bytes; w and h must be multiples of 4.
 // The caller is responsible for DCFlushRange(dst, ...) before GX reads it.
 void lugx_tex_rgba32_to_gx_rgba8(const u8* src, u8* dst, u32 w, u32 h);
+
+// RGBA32 -> GX_TF_RGB5A3 (16-bit): half the RAM and GP bandwidth of RGBA8,
+// lossless for RGBA16 sources. dst must be 32-byte aligned and w*h*2 bytes.
+void lugx_tex_rgba32_to_gx_rgb5a3(const u8* src, u8* dst, u32 w, u32 h);
