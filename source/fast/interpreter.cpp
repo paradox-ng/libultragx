@@ -4759,15 +4759,27 @@ bool gfx_dl_handler_common(F3DGfx** cmd0) {
         }
     }
 
+    // Guard a bad sub-DL pointer. Some geo paths (e.g. the intro logo) emit a raw
+    // segmented DL address that has no segment loaded in the OTR pipeline, so SegAddr
+    // hands back an unresolved value below valid RAM (Wii starts at 0x80000000).
+    // Executing it sends Run reading garbage commands - a runaway that stalls the
+    // frame. Treat it as a missing DL instead.
+    if (subGFX != nullptr && (uintptr_t)subGFX < 0x80000000u) {
+        subGFX = nullptr;
+    }
+
     if (C0(16, 1) == 0) {
         // Push return address
         if (subGFX != nullptr) {
             g_exec_stack.call(*cmd0, subGFX);
         }
     } else {
-        (*cmd0) = subGFX;
-        g_exec_stack.branch(cmd);
-        return true; // shortcut cmd increment
+        if (subGFX != nullptr) {
+            (*cmd0) = subGFX;
+            g_exec_stack.branch(cmd);
+            return true; // shortcut cmd increment
+        }
+        // bad branch target: skip it and continue with the next command
     }
     return false;
 }

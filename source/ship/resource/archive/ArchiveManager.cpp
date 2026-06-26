@@ -53,8 +53,19 @@ std::shared_ptr<std::vector<std::string>> ArchiveManager::ListFiles(const std::s
 }
 
 std::vector<uint32_t> ArchiveManager::GetGameVersions() {
-    // Archive version files are not parsed yet; report one (0) entry so callers
-    // that index [0] are safe.
+    // The game version hash lives in the archive's "version" file: 1 byte endianness
+    // marker (non-zero = big-endian) followed by the 32-bit hash in that endianness.
+    // The game keys its geo function table on this hash; a 0 here leaves that table
+    // empty, so every geo-asm function (camera update, Mario switches, the intro logo,
+    // the title Mario head) resolves to null and never runs.
+    auto file = LoadFile("version");
+    if (file != nullptr && file->Buffer != nullptr && file->Buffer->size() >= 5) {
+        const uint8_t* d = reinterpret_cast<const uint8_t*>(file->Buffer->data());
+        const bool big = d[0] != 0;
+        const uint32_t v = big ? ((uint32_t)d[1] << 24 | (uint32_t)d[2] << 16 | (uint32_t)d[3] << 8 | d[4])
+                               : ((uint32_t)d[4] << 24 | (uint32_t)d[3] << 16 | (uint32_t)d[2] << 8 | d[1]);
+        return { v };
+    }
     return { 0 };
 }
 
