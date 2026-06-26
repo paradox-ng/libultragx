@@ -158,6 +158,12 @@ projects below.
   [2ship2harkinian](https://github.com/HarbourMasters/2ship2harkinian) (Majora's
   Mask).
 
+## Note
+
+libultragx is an experimental and non-profit project made in my free time. I am
+not an expert in C/C++, graphics, or game development, and to be 100% upfront
+about it, I relied on agentic AI to help me achieve this.
+
 ## License
 
 libultragx is licensed under the GNU General Public License v3.0. See `LICENSE`
