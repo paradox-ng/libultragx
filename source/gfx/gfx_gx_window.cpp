@@ -51,11 +51,11 @@ void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/,
     memset(mFifo, 0, LUGX_FIFO_SIZE);
     GX_Init(mFifo, LUGX_FIFO_SIZE);
 
-    // Bring-up milestone: clear to the libultragx pass-green so a completed
-    // interpreter frame is visibly distinguishable. The rendering backend will
-    // own the clear colour once ClearFramebuffer/fills are wired.
-    GXColor green = { 0x1E, 0xDE, 0x1F, 0xFF };
-    GX_SetCopyClear(green, GX_MAX_Z24);
+    // EFB clear colour. The N64 framebuffer is cleared to black where the game
+    // draws no fill or geometry (e.g. the surround on the title screen), so clear
+    // to black rather than a placeholder; gameplay frames overdraw it entirely.
+    GXColor clearColor = { 0x00, 0x00, 0x00, 0xFF };
+    GX_SetCopyClear(clearColor, GX_MAX_Z24);
     GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
     GX_SetDispCopySrc(0, 0, rmode->fbWidth, rmode->efbHeight);
     GX_SetDispCopyDst(rmode->fbWidth, GX_SetDispCopyYScale(GX_GetYScaleFactor(rmode->efbHeight, rmode->xfbHeight)));
