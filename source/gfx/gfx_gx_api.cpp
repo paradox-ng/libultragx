@@ -202,6 +202,23 @@ static bool sLastDepthTest = false;
 static bool sLastDepthMask = false;
 static bool sLastBlend = false;
 
+// Coplanar decal handling. SM64 draws shadows and surface decals with G_ZMODE_DEC: they
+// sit exactly on the floor they belong to, so a plain LEQUAL depth test z-fights them
+// against that floor (and the flicker shifts with the camera angle). Rather than alter
+// the depth compare, bias the decal's depth slightly toward the camera through the
+// viewport far-z (the wii port's approach), so a decal reliably passes LEQUAL against its
+// surface. The depth test/mask themselves stay owned by SetDepthTestAndMask.
+static int sVpX = 0, sVpY = 0, sVpW = 0, sVpH = 0;
+static float sAppliedFarZ = 1.0f;
+static bool sDecalOn = false;
+static const float kGxDecalBias = 0.0001f;
+
+static void lugx_issue_viewport() {
+    const float farZ = sDecalOn ? (1.0f - kGxDecalBias) : 1.0f;
+    GX_SetViewport((f32)sVpX, (f32)sVpY, (f32)sVpW, (f32)sVpH, 0.0f, farZ);
+    sAppliedFarZ = farZ;
+}
+
 void GfxRenderingAPIGX::SetDepthTestAndMask(bool depth_test, bool z_upd) {
     sLastDepthTest = depth_test;
     sLastDepthMask = z_upd;
@@ -209,8 +226,10 @@ void GfxRenderingAPIGX::SetDepthTestAndMask(bool depth_test, bool z_upd) {
 }
 
 void GfxRenderingAPIGX::SetZmodeDecal(bool decal) {
-    // TODO: proper coplanar decal offset. Approximate with EQUAL compare + no write.
-    GX_SetZMode(GX_TRUE, decal ? GX_LEQUAL : GX_LEQUAL, decal ? GX_FALSE : GX_TRUE);
+    if (decal != sDecalOn) {
+        sDecalOn = decal;
+        lugx_issue_viewport();
+    }
 }
 
 void GfxRenderingAPIGX::SetStrictDecal(bool on) {
@@ -218,8 +237,11 @@ void GfxRenderingAPIGX::SetStrictDecal(bool on) {
 }
 
 void GfxRenderingAPIGX::SetViewport(int x, int y, int width, int height) {
-    // TODO: confirm y orientation (GX framebuffer origin is top-left).
-    GX_SetViewport((f32)x, (f32)y, (f32)width, (f32)height, 0.0f, 1.0f);
+    sVpX = x;
+    sVpY = y;
+    sVpW = width;
+    sVpH = height;
+    lugx_issue_viewport();
 }
 
 void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
