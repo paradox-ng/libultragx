@@ -423,7 +423,14 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         for (int c = 0; c < 4; c++) {
             proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
         }
-        GX_LoadProjectionMtx(proj, GX_PERSPECTIVE);
+        // This path is taken only when the slot matrix has no perspective term (W column
+        // [0,0,0,1]), i.e. an orthographic/affine 2D transform, so load it as ORTHOGRAPHIC.
+        // GX_PERSPECTIVE would read the z-coupling column (proj[i][2]) and force w = -z,
+        // discarding the translation column (proj[i][3]); 2D quads positioned purely by a
+        // translate matrix (menu glyphs, the title background tiles, the file-select cursor)
+        // would then collapse to the object origin and vanish. ORTHOGRAPHIC reads proj[i][3]
+        // (the translation) and uses w = 1.
+        GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
     }
     DZ("post-mtx");
     if (g_gx_stop_at == 3) { dtc++; return; }
