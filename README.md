@@ -160,7 +160,13 @@ projects below.
 
 ## License
 
-The framework code in libultragx is original work. The third-party code adopted
-from libultraship (the Fast3D interpreter and the N64 ABI headers) is MIT licensed
-and retains its original copyright notices; the specific files are enumerated in
-`NOTICE.md`. Vendored dependencies are governed by their own licenses.
+libultragx is licensed under the GNU General Public License v3.0. See `LICENSE`
+for the full text.
+
+Copyright (C) 2026 Paradox.
+
+The third-party code adopted from libultraship (the Fast3D interpreter and the N64
+ABI headers) is MIT licensed and retains its original copyright notices. MIT is
+compatible with the GPL, so those files keep their MIT terms while libultragx as a
+whole is distributed under GPL-3.0. The specific files are listed in `NOTICE.md`.
+Vendored dependencies are governed by their own licenses.
