@@ -156,19 +156,25 @@ void GfxRenderingAPIGX::UploadTexture(const uint8_t* rgba32Buf, uint32_t width, 
     const uint32_t padW = (width + 3u) & ~3u;
     const uint32_t padH = (height + 3u) & ~3u;
     size_t sz = (size_t)padW * padH * 2;
-    // Allocate the new buffer BEFORE freeing the old one: if the heap is exhausted
-    // (e.g. a dialog loads its font + box textures on top of the level), memalign
-    // returns null. Binding a null texture makes GX read garbage and corrupts the
-    // draw, so on failure keep the previous data and count it instead.
-    void* newData = memalign(32, sz);
-    if (newData == nullptr) {
-        g_gx_tex_oom++;
-        return;
+    // Reuse the existing buffer when it is already the right size. The SoH dialog
+    // font invalidates the texture cache per glyph, so the same glyphs re-upload
+    // every frame; free()+memalign() each time churns and fragments the heap (a big
+    // chunk of the per-glyph cost and the source of the OOM that corrupts other
+    // textures). Only (re)allocate when the size actually changes. Allocate the new
+    // buffer before freeing the old, and on failure keep the previous data and count
+    // it rather than binding null (which GX would sample as garbage).
+    if (t.data == nullptr || t.dataBytes != sz) {
+        void* newData = memalign(32, sz);
+        if (newData == nullptr) {
+            g_gx_tex_oom++;
+            return;
+        }
+        if (t.data != nullptr) {
+            free(t.data);
+        }
+        t.data = newData;
+        t.dataBytes = (u32)sz;
     }
-    if (t.data != nullptr) {
-        free(t.data);
-    }
-    t.data = newData;
     lugx_tex_rgba32_to_gx_rgb5a3(rgba32Buf, (u8*)t.data, width, height);
     DCFlushRange(t.data, sz);
     t.width = width;
@@ -200,6 +206,7 @@ void GfxRenderingAPIGX::DeleteTexture(uint32_t texId) {
     if (texId < mTextures.size() && mTextures[texId].data != nullptr) {
         free(mTextures[texId].data);
         mTextures[texId].data = nullptr;
+        mTextures[texId].dataBytes = 0;
     }
 }
 
