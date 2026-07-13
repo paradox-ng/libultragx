@@ -38,6 +38,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     uint32_t NewTexture() override;
     void SelectTexture(int tile, uint32_t textureId) override;
     void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) override;
+    void SetNextTexturePack(LugxTexPack pack) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
     void DeleteTexture(uint32_t texId) override;
     void SetTextureFilter(FilteringMode mode) override;
@@ -105,6 +106,7 @@ class GfxRenderingAPIGX final : public GfxRenderingAPI {
     std::vector<GxTexture> mTextures;     // indexed by texture id
     uint32_t mTileTexture[2] = { 0, 0 };  // texture id bound to each tile
     int mCurrentTile = 0;
+    LugxTexPack mNextPack = LugxTexPack::RGB5A3; // GX format for the next UploadTexture
     FilteringMode mFilterMode = FILTER_THREE_POINT;
     ShaderProgram* mCurrentShader = nullptr;
     std::unordered_map<uint64_t, ShaderProgram*> mShaderCache; // keyed by shaderId0 (id1 folded in)

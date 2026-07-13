@@ -679,6 +679,8 @@ uint32_t Interpreter::AcquirePaletteTexture() {
         palBuf[4 * e + 3] = (col16 & 1) ? 255 : 0;
     }
     mRapi->SelectTexture(SHADER_PALETTE_TEXTURE, mPaletteRingTexture[slot]);
+    // The TLUT is full RGBA colour; keep it RGB5A3 regardless of any pending hint.
+    mRapi->SetNextTexturePack(LugxTexPack::RGB5A3);
     mRapi->UploadTexture(palBuf, 256, 1);
     mRapi->SetSamplerParameters(SHADER_PALETTE_TEXTURE, false, G_TX_CLAMP, G_TX_CLAMP);
     return mPaletteRingTexture[slot];
@@ -1815,6 +1817,21 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
         origAddr == nullptr) {
         return;
     }
+
+    // Pick the tightest GX texel format the backend should store this texture in.
+    // The raw/img paths hand the backend bytes it must treat as full RGBA, and CI /
+    // RGBA sources need full colour, so only intensity and intensity-alpha formats
+    // opt into a smaller pack (I4/I8/IA4/IA8); everything else stays RGB5A3. The
+    // backend consumes this hint and resets to the RGB5A3 default per upload.
+    LugxTexPack pack = LugxTexPack::RGB5A3;
+    if ((texFlags & (TEX_FLAG_LOAD_AS_IMG | TEX_FLAG_LOAD_AS_RAW)) == 0) {
+        if (fmt == G_IM_FMT_IA) {
+            pack = (siz == G_IM_SIZ_16b) ? LugxTexPack::IA8 : LugxTexPack::IA4;
+        } else if (fmt == G_IM_FMT_I) {
+            pack = (siz == G_IM_SIZ_8b) ? LugxTexPack::I8 : LugxTexPack::I4;
+        }
+    }
+    mRapi->SetNextTexturePack(pack);
 
     if ((texFlags & TEX_FLAG_LOAD_AS_IMG) != 0) {
         ImportTextureImg(tile, importReplacement);

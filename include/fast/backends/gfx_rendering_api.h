@@ -17,6 +17,20 @@ struct GfxClipParameters {
 
 enum FilteringMode { FILTER_THREE_POINT, FILTER_LINEAR, FILTER_NONE };
 
+// Target GX texel format for the next texture upload. The interpreter always hands
+// the backend a decoded RGBA32 buffer but knows the N64 source format; picking the
+// tightest GX format that reproduces it cuts texture RAM and GP texture bandwidth.
+// Intensity / intensity-alpha sources (fonts, shadows, HUD elements) shrink 2-4x
+// versus promoting everything to RGB5A3. Full-colour (RGBA) and palettised (CI)
+// sources stay RGB5A3, which is the resting default.
+enum class LugxTexPack : uint8_t {
+    RGB5A3 = 0, // RGBA16 / RGBA32 / CI -> GX_TF_RGB5A3 (16bpp)
+    IA8,        // IA16                 -> GX_TF_IA8    (16bpp, full 8I/8A)
+    IA4,        // IA8 / IA4            -> GX_TF_IA4    (8bpp)
+    I8,         // I8                   -> GX_TF_I8     (8bpp)
+    I4,         // I4                   -> GX_TF_I4     (4bpp)
+};
+
 // Per-draw color-combiner constants, latched at flush time. The combiner
 // formula runs on the GPU; these are the RDP register operands it reads.
 // inputs[] is filled according to the combiner's shader_input_mapping.
@@ -112,6 +126,10 @@ class GfxRenderingAPI {
     virtual uint32_t NewTexture() = 0;
     virtual void SelectTexture(int tile, uint32_t textureId) = 0;
     virtual void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) = 0;
+    // Hint the GX texel format for the next UploadTexture. The interpreter sets this
+    // from the N64 source format right before decoding; the backend resets it to the
+    // RGB5A3 default after consuming it. Backends that only store RGBA may ignore it.
+    virtual void SetNextTexturePack(LugxTexPack /*pack*/) {}
     // Upload one level of a mipmapped texture to the currently selected texture.
     // Level 0 must be uploaded first, with totalLevels indicating the full chain size.
     // Backends without mipmap support fall back to uploading only the base level.

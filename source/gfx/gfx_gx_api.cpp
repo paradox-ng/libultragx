@@ -141,7 +141,17 @@ void GfxRenderingAPIGX::SelectTexture(int tile, uint32_t textureId) {
     }
 }
 
+void GfxRenderingAPIGX::SetNextTexturePack(LugxTexPack pack) {
+    mNextPack = pack;
+}
+
 void GfxRenderingAPIGX::UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) {
+    // Consume the interpreter's format hint and return to the RGB5A3 default, so
+    // standalone uploads (the CI palette, the fallback checker) never inherit a
+    // stale intensity/IA pack from a preceding decode.
+    const LugxTexPack pack = mNextPack;
+    mNextPack = LugxTexPack::RGB5A3;
+
     if (mCurrentTile < 0 || mCurrentTile >= 2) {
         return;
     }
@@ -150,12 +160,27 @@ void GfxRenderingAPIGX::UploadTexture(const uint8_t* rgba32Buf, uint32_t width, 
         return;
     }
     GxTexture& t = mTextures[id];
-    // Store as GX_TF_RGB5A3 (16-bit): half the RAM and GP texture bandwidth of
-    // RGBA8, and lossless for the N64's dominant RGBA16 textures. Size for the
-    // tile-aligned (multiple-of-4) dimensions so the tiled write stays in bounds.
-    const uint32_t padW = (width + 3u) & ~3u;
-    const uint32_t padH = (height + 3u) & ~3u;
-    size_t sz = (size_t)padW * padH * 2;
+
+    // Store each texture in the tightest GX format that reproduces its N64 source
+    // (chosen by the interpreter). RGBA16 is already optimal at RGB5A3; intensity
+    // and intensity-alpha sources pack to I4/I8/IA4/IA8 for 2-4x less texture RAM
+    // and GP bandwidth. GX derives the tiling from (width, height, fmt), so pass the
+    // real dimensions to GX_InitTexObj; the packed buffer is sized for the format's
+    // tile-aligned dimensions (block sizes vary: I4 8x8, I8/IA4 8x4, else 4x4).
+    u8 gxFmt;
+    uint32_t blockW, blockH;
+    uint32_t bitsPerTexel;
+    switch (pack) {
+        case LugxTexPack::I4:  gxFmt = GX_TF_I4;  blockW = 8; blockH = 8; bitsPerTexel = 4;  break;
+        case LugxTexPack::I8:  gxFmt = GX_TF_I8;  blockW = 8; blockH = 4; bitsPerTexel = 8;  break;
+        case LugxTexPack::IA4: gxFmt = GX_TF_IA4; blockW = 8; blockH = 4; bitsPerTexel = 8;  break;
+        case LugxTexPack::IA8: gxFmt = GX_TF_IA8; blockW = 4; blockH = 4; bitsPerTexel = 16; break;
+        case LugxTexPack::RGB5A3:
+        default:               gxFmt = GX_TF_RGB5A3; blockW = 4; blockH = 4; bitsPerTexel = 16; break;
+    }
+    const uint32_t padW = (width + (blockW - 1)) & ~(blockW - 1);
+    const uint32_t padH = (height + (blockH - 1)) & ~(blockH - 1);
+    const size_t sz = ((size_t)padW * padH * bitsPerTexel) / 8;
     // Reuse the existing buffer when it is already the right size. The SoH dialog
     // font invalidates the texture cache per glyph, so the same glyphs re-upload
     // every frame; free()+memalign() each time churns and fragments the heap (a big
@@ -175,11 +200,18 @@ void GfxRenderingAPIGX::UploadTexture(const uint8_t* rgba32Buf, uint32_t width, 
         t.data = newData;
         t.dataBytes = (u32)sz;
     }
-    lugx_tex_rgba32_to_gx_rgb5a3(rgba32Buf, (u8*)t.data, width, height);
+    switch (pack) {
+        case LugxTexPack::I4:  lugx_tex_rgba32_to_gx_i4(rgba32Buf, (u8*)t.data, width, height);  break;
+        case LugxTexPack::I8:  lugx_tex_rgba32_to_gx_i8(rgba32Buf, (u8*)t.data, width, height);  break;
+        case LugxTexPack::IA4: lugx_tex_rgba32_to_gx_ia4(rgba32Buf, (u8*)t.data, width, height); break;
+        case LugxTexPack::IA8: lugx_tex_rgba32_to_gx_ia8(rgba32Buf, (u8*)t.data, width, height); break;
+        case LugxTexPack::RGB5A3:
+        default:               lugx_tex_rgba32_to_gx_rgb5a3(rgba32Buf, (u8*)t.data, width, height); break;
+    }
     DCFlushRange(t.data, sz);
     t.width = width;
     t.height = height;
-    t.fmt = GX_TF_RGB5A3;
+    t.fmt = gxFmt;
 }
 
 void GfxRenderingAPIGX::SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) {

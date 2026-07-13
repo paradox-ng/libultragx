@@ -34,6 +34,83 @@ void lugx_tex_rgba32_to_gx_rgb5a3(const u8* src, u8* dst, u32 w, u32 h) {
     }
 }
 
+// Clamp a source (x,y) to the edge and return the RGBA32 texel. Padding texels
+// (beyond w/h, up to the tile boundary) replicate the edge so filtering and GX's
+// tile-aligned reads see sane data rather than garbage.
+static inline const u8* lugx_clamp_texel(const u8* src, u32 x, u32 y, u32 w, u32 h) {
+    if (x >= w) {
+        x = w - 1;
+    }
+    if (y >= h) {
+        y = h - 1;
+    }
+    return src + ((size_t)y * w + x) * 4;
+}
+
+void lugx_tex_rgba32_to_gx_ia8(const u8* src, u8* dst, u32 w, u32 h) {
+    // GX_TF_IA8: 4x4 tiles, 16 bits/texel, big-endian [alpha:8][intensity:8].
+    u32 o = 0;
+    for (u32 ty = 0; ty < h; ty += 4) {
+        for (u32 tx = 0; tx < w; tx += 4) {
+            for (u32 y = 0; y < 4; y++) {
+                for (u32 x = 0; x < 4; x++) {
+                    const u8* p = lugx_clamp_texel(src, tx + x, ty + y, w, h);
+                    dst[o++] = p[3]; // A (high byte)
+                    dst[o++] = p[0]; // I (low byte) = R
+                }
+            }
+        }
+    }
+}
+
+void lugx_tex_rgba32_to_gx_ia4(const u8* src, u8* dst, u32 w, u32 h) {
+    // GX_TF_IA4: 8x4 tiles, 8 bits/texel, [alpha:4][intensity:4].
+    u32 o = 0;
+    for (u32 ty = 0; ty < h; ty += 4) {
+        for (u32 tx = 0; tx < w; tx += 8) {
+            for (u32 y = 0; y < 4; y++) {
+                for (u32 x = 0; x < 8; x++) {
+                    const u8* p = lugx_clamp_texel(src, tx + x, ty + y, w, h);
+                    u8 i4 = (u8)(p[0] >> 4);
+                    u8 a4 = (u8)(p[3] >> 4);
+                    dst[o++] = (u8)((a4 << 4) | i4);
+                }
+            }
+        }
+    }
+}
+
+void lugx_tex_rgba32_to_gx_i8(const u8* src, u8* dst, u32 w, u32 h) {
+    // GX_TF_I8: 8x4 tiles, 8 bits/texel intensity (GX samples it as I,I,I,I).
+    u32 o = 0;
+    for (u32 ty = 0; ty < h; ty += 4) {
+        for (u32 tx = 0; tx < w; tx += 8) {
+            for (u32 y = 0; y < 4; y++) {
+                for (u32 x = 0; x < 8; x++) {
+                    const u8* p = lugx_clamp_texel(src, tx + x, ty + y, w, h);
+                    dst[o++] = p[0]; // I = R
+                }
+            }
+        }
+    }
+}
+
+void lugx_tex_rgba32_to_gx_i4(const u8* src, u8* dst, u32 w, u32 h) {
+    // GX_TF_I4: 8x8 tiles, 4 bits/texel; two texels per byte, even x in the high nibble.
+    u32 o = 0;
+    for (u32 ty = 0; ty < h; ty += 8) {
+        for (u32 tx = 0; tx < w; tx += 8) {
+            for (u32 y = 0; y < 8; y++) {
+                for (u32 x = 0; x < 8; x += 2) {
+                    const u8* p0 = lugx_clamp_texel(src, tx + x, ty + y, w, h);
+                    const u8* p1 = lugx_clamp_texel(src, tx + x + 1, ty + y, w, h);
+                    dst[o++] = (u8)(((p0[0] >> 4) << 4) | (p1[0] >> 4));
+                }
+            }
+        }
+    }
+}
+
 void lugx_tex_rgba32_to_gx_rgba8(const u8* src, u8* dst, u32 w, u32 h) {
     u32 o = 0;
     for (u32 ty = 0; ty < h; ty += 4) {
