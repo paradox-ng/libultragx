@@ -95,8 +95,15 @@ void osSetEventMesg(OSEvent /*event*/, OSMesgQueue* /*mq*/, OSMesg /*msg*/) {
 // ---- Address translation: CPU virtual -> physical (DMA) address ----
 
 uint32_t osVirtualToPhysical(void* vaddr) {
-    // Strip the cached/uncached MEM region bits to get the physical offset.
-    return (uint32_t)((uintptr_t)vaddr & 0x3FFFFFFF);
+    // The software renderer never issues a real RCP DMA, so this must return a
+    // usable CPU pointer, not a physical offset. The Goddard engine is the only
+    // caller: it feeds osVirtualToPhysical(ram_ptr) straight into gSPVertex /
+    // gSPMatrix / gSPLight in a display list it builds in RAM, and the
+    // interpreter's SegAddr() treats any bit-0-clear address as a raw pointer.
+    // Masking off the 0x80000000 cache-region bit here would corrupt every one
+    // of those reads, so pass the pointer through unchanged (matches the
+    // sm64-port NO_SEGMENTED_MEMORY behaviour).
+    return (uint32_t)(uintptr_t)vaddr;
 }
 
 // ---- Time ----
