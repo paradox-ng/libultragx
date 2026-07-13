@@ -326,6 +326,14 @@ extern "C" void bootflush(void);
 volatile unsigned g_dt_total = 0;     // total triangle batches submitted (gdb-readable)
 volatile unsigned g_dt_lastverts = 0; // verts of the most recent batch
 
+// A clip-space vertex plus its interpolable attributes, used by the 3D path's
+// near-plane clipping. `a` packs normal|colour (at shadeOff) then texcoord, matching
+// emitAttribs's order; only the first nAttr floats are meaningful for a given draw.
+struct LugxClipVert {
+    float x, y, z, w;
+    float a[9];
+};
+
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     (void)buf_vbo_len;
     if (g_gx_skip_draw || mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
@@ -624,41 +632,115 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             }
             return false;
         };
+        // Per-vertex transform to a clip-space vertex + its interpolable attributes, and
+        // the emit that feeds GX clip coords (the pass-through perspective does the divide)
+        // with the w-clamp as a last resort for anything at/behind the eye that survives.
+        const int nAttr = (submitNormal ? 3 : 0) + (submitColor ? 4 : 0) + (numTex > 0 ? 2 : 0);
+        auto toCV = [&](const float* v) -> LugxClipVert {
+            LugxClipVert o;
+            int s = (int)v[4];
+            if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
+                s = 0;
+            }
+            const float(*M)[4] = mTransform.mtx_palette[s];
+            const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
+            o.x = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
+            o.y = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
+            o.z = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + ow * M[3][2];
+            o.w = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
+            int k = 0;
+            if (submitNormal) {
+                o.a[k++] = v[shadeOff + 0];
+                o.a[k++] = v[shadeOff + 1];
+                o.a[k++] = v[shadeOff + 2];
+            }
+            if (submitColor) {
+                o.a[k++] = v[shadeOff + 0];
+                o.a[k++] = v[shadeOff + 1];
+                o.a[k++] = v[shadeOff + 2];
+                o.a[k++] = v[shadeOff + 3];
+            }
+            if (numTex > 0) {
+                o.a[k++] = v[texOff + 0];
+                o.a[k++] = v[texOff + 1];
+            }
+            return o;
+        };
+        auto lerpCV = [&](const LugxClipVert& A, const LugxClipVert& B, float t) -> LugxClipVert {
+            LugxClipVert o;
+            o.x = A.x + (B.x - A.x) * t;
+            o.y = A.y + (B.y - A.y) * t;
+            o.z = A.z + (B.z - A.z) * t;
+            o.w = A.w + (B.w - A.w) * t;
+            for (int i = 0; i < nAttr; i++) {
+                o.a[i] = A.a[i] + (B.a[i] - A.a[i]) * t;
+            }
+            return o;
+        };
+        auto emitCV = [&](const LugxClipVert& c) {
+            float cw = c.w < 0.001f ? 0.001f : c.w;
+            GX_Position3f32(c.x, c.y, -cw);
+            int k = 0;
+            if (submitNormal) {
+                GX_Normal3f32(c.a[k], c.a[k + 1], c.a[k + 2]);
+                k += 3;
+            }
+            if (submitColor) {
+                u8 al = useAlpha ? float_to_u8(c.a[k + 3]) : 255;
+                GX_Color4u8(float_to_u8(c.a[k]), float_to_u8(c.a[k + 1]), float_to_u8(c.a[k + 2]), al);
+                k += 4;
+            }
+            if (numTex > 0) {
+                const float* uvt = mCombinerUniforms.uv_transform[0];
+                GX_TexCoord2f32(c.a[k] * uvt[0] + uvt[1], c.a[k + 1] * uvt[2] + uvt[3]);
+            }
+        };
+        // A triangle fully in front of the near plane (all w >= W_NEAR) passes through
+        // unchanged; one that crosses it is near-plane clipped (Sutherland-Hodgman against
+        // w = W_NEAR, <=4 output verts fanned into triangles) so the near part keeps a sane
+        // w and the perspective-correct texture no longer stretches/warps (the floor warp).
+        static std::vector<LugxClipVert> scratch;
+        scratch.clear();
+        const float W_NEAR = 1.0f;
+        LugxClipVert poly[4];
         const size_t nTris = buf_vbo_num_tris;
-        size_t kept = 0;
         for (size_t t = 0; t < nTris; t++) {
             const float* a = &buf_vbo[(t * 3 + 0) * (size_t)stride];
             const float* b = &buf_vbo[(t * 3 + 1) * (size_t)stride];
             const float* c = &buf_vbo[(t * 3 + 2) * (size_t)stride];
-            if (!triDrop(a, b, c)) {
-                kept++;
-            }
-        }
-        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kept * 3));
-        for (size_t t = 0; t < nTris; t++) {
-            const float* tri[3] = { &buf_vbo[(t * 3 + 0) * (size_t)stride],
-                                    &buf_vbo[(t * 3 + 1) * (size_t)stride],
-                                    &buf_vbo[(t * 3 + 2) * (size_t)stride] };
-            if (triDrop(tri[0], tri[1], tri[2])) {
+            if (triDrop(a, b, c)) {
                 continue; // outside one frustum plane or backface-culled
             }
-            for (int k = 0; k < 3; k++) {
-                const float* v = tri[k];
-                int s = (int)v[4];
-                if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
-                    s = 0;
-                }
-                const float(*M)[4] = mTransform.mtx_palette[s];
-                const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
-                const float cx = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
-                const float cy = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
-                float cw = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
-                if (cw < 0.001f) {
-                    cw = 0.001f;
-                }
-                GX_Position3f32(cx, cy, -cw);
-                emitAttribs(v);
+            const LugxClipVert in[3] = { toCV(a), toCV(b), toCV(c) };
+            if (in[0].w >= W_NEAR && in[1].w >= W_NEAR && in[2].w >= W_NEAR) {
+                scratch.push_back(in[0]);
+                scratch.push_back(in[1]);
+                scratch.push_back(in[2]);
+                continue;
             }
+            int np = 0;
+            for (int i = 0; i < 3; i++) {
+                const LugxClipVert& cur = in[i];
+                const LugxClipVert& nxt = in[(i + 1) % 3];
+                const bool curIn = cur.w >= W_NEAR;
+                const bool nxtIn = nxt.w >= W_NEAR;
+                if (curIn) {
+                    poly[np++] = cur;
+                }
+                if (curIn != nxtIn) {
+                    const float tt = (W_NEAR - cur.w) / (nxt.w - cur.w);
+                    poly[np++] = lerpCV(cur, nxt, tt);
+                }
+            }
+            for (int i = 1; i + 1 < np; i++) {
+                scratch.push_back(poly[0]);
+                scratch.push_back(poly[i]);
+                scratch.push_back(poly[i + 1]);
+            }
+        }
+        GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)scratch.size());
+        for (const LugxClipVert& c : scratch) {
+            emitCV(c);
         }
         GX_End();
     } else {
