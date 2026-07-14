@@ -611,45 +611,34 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // are all outside the SAME plane. Without this, off-screen / behind-camera
         // triangles get w-clamped and fling across the screen (the "vertex explosion").
         // Two passes: GX_Begin needs the exact kept-vertex count up front.
-        auto clipOf = [&](const float* v, float& cx, float& cy, float& cw) -> unsigned {
-            int s = (int)v[4];
-            if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
-                s = 0;
-            }
-            const float(*M)[4] = mTransform.mtx_palette[s];
-            const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
-            cx = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
-            cy = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
-            const float cz = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + ow * M[3][2];
-            cw = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
-            unsigned r = 0;
-            if (cx < -cw) r |= 1u;
-            if (cx > cw) r |= 2u;
-            if (cy < -cw) r |= 4u;
-            if (cy > cw) r |= 8u;
-            if (cz < -cw) r |= 16u;
-            if (cz > cw) r |= 32u;
-            return r;
-        };
         // Returns true if the triangle should be dropped: either all 3 vertices are
         // outside the same frustum plane (clip reject), or it fails the backface cull.
-        // The cull is the wii-port screen-space cross product with a w<0 sign flip; we
-        // can't use GX hardware culling because we feed it clip coords (wrong winding).
-        auto triDrop = [&](const float* a, const float* b, const float* c) -> bool {
-            float ax, ay, aw, bx, by, bw, ccx, ccy, ccw;
-            const unsigned ra = clipOf(a, ax, ay, aw);
-            const unsigned rb = clipOf(b, bx, by, bw);
-            const unsigned rc = clipOf(c, ccx, ccy, ccw);
-            if (ra & rb & rc) {
+        // Operates on the ALREADY-transformed clip verts (from toCV) so the per-vertex
+        // MVP transform runs once per frame instead of twice - it was the dominant
+        // per-frame CPU cost and the reject/cull was re-transforming every vertex. The
+        // cull is the wii-port screen-space cross product with a w<0 sign flip; we can't
+        // use GX hardware culling because we feed it clip coords (wrong winding).
+        auto triDropCV = [&](const LugxClipVert& A, const LugxClipVert& B, const LugxClipVert& C) -> bool {
+            auto rej = [](const LugxClipVert& v) -> unsigned {
+                unsigned r = 0;
+                if (v.x < -v.w) r |= 1u;
+                if (v.x > v.w) r |= 2u;
+                if (v.y < -v.w) r |= 4u;
+                if (v.y > v.w) r |= 8u;
+                if (v.z < -v.w) r |= 16u;
+                if (v.z > v.w) r |= 32u;
+                return r;
+            };
+            if (rej(A) & rej(B) & rej(C)) {
                 return true;
             }
             if (mCullKeepSign != 0) {
-                const float dx1 = ax / aw - bx / bw;
-                const float dy1 = ay / aw - by / bw;
-                const float dx2 = ccx / ccw - bx / bw;
-                const float dy2 = ccy / ccw - by / bw;
+                const float dx1 = A.x / A.w - B.x / B.w;
+                const float dy1 = A.y / A.w - B.y / B.w;
+                const float dx2 = C.x / C.w - B.x / B.w;
+                const float dy2 = C.y / C.w - B.y / B.w;
                 float cross = dx1 * dy2 - dy1 * dx2;
-                if ((aw < 0) ^ (bw < 0) ^ (ccw < 0)) {
+                if ((A.w < 0) ^ (B.w < 0) ^ (C.w < 0)) {
                     cross = -cross; // one vertex behind the eye flips the screen winding
                 }
                 if (mCullKeepSign > 0) {
@@ -740,10 +729,10 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             const float* a = &buf_vbo[(t * 3 + 0) * (size_t)stride];
             const float* b = &buf_vbo[(t * 3 + 1) * (size_t)stride];
             const float* c = &buf_vbo[(t * 3 + 2) * (size_t)stride];
-            if (triDrop(a, b, c)) {
+            const LugxClipVert in[3] = { toCV(a), toCV(b), toCV(c) };
+            if (triDropCV(in[0], in[1], in[2])) {
                 continue; // outside one frustum plane or backface-culled
             }
-            const LugxClipVert in[3] = { toCV(a), toCV(b), toCV(c) };
             if (in[0].w >= W_NEAR && in[1].w >= W_NEAR && in[2].w >= W_NEAR) {
                 scratch.push_back(in[0]);
                 scratch.push_back(in[1]);
