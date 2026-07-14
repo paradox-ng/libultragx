@@ -53,6 +53,7 @@ class GfxWindowBackendGX final : public GfxWindowBackend {
     void* mFrameBuffer[2] = { nullptr, nullptr };
     void* mFifo = nullptr;
     uint32_t mFbIndex = 0;
+    uint32_t mLastPresentRetrace = 0; // VI retrace count at the last present, for fps pacing
     uint32_t mWidth = 0;
     uint32_t mHeight = 0;
     uint64_t mStartTicks = 0;

@@ -146,6 +146,12 @@ int32_t Fast3dWindow::GetTargetFps() {
 
 void Fast3dWindow::SetTargetFps(int32_t fps) {
     mTargetFps = fps;
+    // Forward to the window backend so it can pace the present to this rate. Without
+    // this the GX backend keeps its default (60) and never caps, so a 30fps game
+    // whose logic is tied to the present rate runs at double speed.
+    if (mWindowManagerApi != nullptr) {
+        mWindowManagerApi->SetTargetFps(fps);
+    }
 }
 
 void Fast3dWindow::SetMaximumFrameLatency(int32_t /*latency*/) {

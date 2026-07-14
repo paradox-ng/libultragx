@@ -19,6 +19,15 @@ namespace Fast {
 
 #define LUGX_FIFO_SIZE (256 * 1024)
 
+// VI field counter, bumped by the post-retrace interrupt. libogc has no
+// GetRetraceCount, so track it here to pace presents to a target framerate
+// (present every Nth field) in SwapBuffersEnd. The VI ISR passes the running
+// count; storing it is safe alongside VIDEO_WaitVSync (which uses its own signal).
+static volatile uint32_t s_viRetraceCount = 0;
+static void lugx_on_retrace(u32 cnt) {
+    s_viRetraceCount = cnt;
+}
+
 void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/, bool /*startFullScreen*/,
                               uint32_t width, uint32_t height, int32_t /*posX*/, int32_t /*posY*/) {
     if (mInitialized) {
@@ -26,6 +35,7 @@ void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/,
     }
 
     VIDEO_Init();
+    VIDEO_SetPostRetraceCallback(lugx_on_retrace);
     PAD_Init();
 #ifdef HW_RVL
     WPAD_Init();
@@ -141,7 +151,19 @@ void GfxWindowBackendGX::SwapBuffersEnd() {
     GX_DrawDone();
     VIDEO_SetNextFramebuffer(mFrameBuffer[mFbIndex]);
     VIDEO_Flush();
-    VIDEO_WaitVSync();
+    // Pace the present to the target framerate instead of presenting every field.
+    // SM64 is a 30fps game, so mTargetFps is 30 (from GetInterpolationFPS) and we
+    // present on every other video field - a steady 30 rather than the 30<->60
+    // double-buffer oscillation (a frame that just misses the 60Hz deadline would
+    // otherwise slip to the next field and read as judder). Gate on the retrace
+    // counter so a frame that already overran its field budget presents at once
+    // instead of being padded further. With interpolation on (mTargetFps=60) this
+    // is one field per present = 60.
+    uint32_t fields = (mTargetFps > 0 && mTargetFps < 60u) ? (60u / mTargetFps) : 1u;
+    while (s_viRetraceCount < mLastPresentRetrace + fields) {
+        VIDEO_WaitVSync();
+    }
+    mLastPresentRetrace = s_viRetraceCount;
     mFbIndex ^= 1;
 }
 
