@@ -35,31 +35,16 @@ ZipArchive::~ZipArchive() {
 
 bool ZipArchive::Open(const std::string& path) {
     Close();
-    // Read the whole archive into RAM and serve all reads from there (via an
-    // fmemopen view), then close the SD file handle. Keeping the SD handle open and
-    // interleaving its reads with other libfat I/O (e.g. log writes) deadlocks under
-    // Dolphin's emulated SD after a few dozen ops.
-    FILE* disk = fopen(path.c_str(), "rb");
-    if (disk == nullptr) {
-        return false;
-    }
-    fseek(disk, 0, SEEK_END);
-    long sz = ftell(disk);
-    fseek(disk, 0, SEEK_SET);
-    if (sz <= 0) {
-        fclose(disk);
-        return false;
-    }
-    mData.resize((size_t)sz);
-    size_t got = fread(mData.data(), 1, (size_t)sz, disk);
-    fclose(disk);
-    if (got != (size_t)sz) {
-        Close();
-        return false;
-    }
-    mFile = fmemopen(mData.data(), mData.size(), "rb");
+    // SPIKE (o2r streaming): keep the SD file handle open and stream every entry
+    // read straight from it, instead of loading the whole ~10MB archive into RAM.
+    // On a 24MB GameCube the resident archive was ~42% of RAM. The RAM-resident
+    // design was chosen because interleaving the archive's SD reads with libfat
+    // WRITES (debug log flushes) deadlocks Dolphin's emulated SD after a few dozen
+    // ops; with logging off during play this is read-only, so streaming should be
+    // safe. ReadCentralDirectory + Read already operate on mFile via fseek/fread,
+    // so pointing mFile at the live SD handle needs no other change.
+    mFile = fopen(path.c_str(), "rb");
     if (mFile == nullptr) {
-        Close();
         return false;
     }
     if (!ReadCentralDirectory()) {
