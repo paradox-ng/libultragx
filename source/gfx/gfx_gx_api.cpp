@@ -33,6 +33,19 @@ void lugx_gx_set_view_matrix(const float m[4][4]) {
     memcpy(sGxViewMtx, m, sizeof(sGxViewMtx));
 }
 
+// Matrix-load cache. The 3D software-clip path feeds every draw a constant identity
+// pos-matrix and a constant pass-through projection, and the lit path a constant
+// identity normal matrix. GX matrix memory persists until overwritten, so track which
+// of those are already resident and skip the redundant per-draw reloads (many draws
+// per frame). Any code that loads a different pos/projection (the 2D path,
+// ClearFramebuffer, the fps overlay) must clear the flags via lugx_gx_invalidate_mtx_cache.
+static bool sPassThroughLoaded = false; // identity pos-mtx + pass-through projection resident
+static bool sNrmIdentityLoaded = false; // identity normal matrix resident
+static void lugx_gx_invalidate_mtx_cache() {
+    sPassThroughLoaded = false;
+    sNrmIdentityLoaded = false;
+}
+
 // What a "shader" is for the GX backend: the N64 combiner decoded from the 64-bit
 // shader ids (which encode the RDP combine state), kept as the full CCFeatures so
 // DrawTriangles knows the vertex layout and how to drive the TEV stages.
@@ -486,9 +499,6 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     const bool swclip = (Mc[0][3] < -0.001f || Mc[0][3] > 0.001f || Mc[1][3] < -0.001f || Mc[1][3] > 0.001f ||
                          Mc[2][3] < -0.001f || Mc[2][3] > 0.001f || Mc[3][3] < 0.999f || Mc[3][3] > 1.001f);
     if (swclip) {
-        Mtx ident;
-        guMtxIdentity(ident);
-        GX_LoadPosMtxImm(ident, GX_PNMTX0);
         // Fixed pass-through perspective (built once): GX computes W = -z_in and maps a
         // w-buffered depth in [n,f] to NDC z [-1,0]. n/f are SM64's.
         static Mtx44 sPassPersp;
@@ -503,7 +513,15 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             sPassPersp[3][2] = -1.0f;
             sPassBuilt = true;
         }
-        GX_LoadProjectionMtx(sPassPersp, GX_PERSPECTIVE);
+        // Identity pos-matrix + pass-through projection are constant across every 3D
+        // draw; only (re)load them when they are not already resident (see the cache).
+        if (!sPassThroughLoaded) {
+            Mtx ident;
+            guMtxIdentity(ident);
+            GX_LoadPosMtxImm(ident, GX_PNMTX0);
+            GX_LoadProjectionMtx(sPassPersp, GX_PERSPECTIVE);
+            sPassThroughLoaded = true;
+        }
     } else {
         Mtx mv;
         for (int r = 0; r < 3; r++) {
@@ -532,6 +550,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // would then collapse to the object origin and vanish. ORTHOGRAPHIC reads proj[i][3]
         // (the translation) and uses w = 1.
         GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
+        sPassThroughLoaded = false; // 2D loaded a different pos-mtx + projection
     }
     DZ("post-mtx");
     if (g_gx_stop_at == 3) { dtc++; return; }
@@ -543,9 +562,13 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     if (submitNormal) {
         // Normal matrix = inverse-transpose of the modelview 3x3; our modelview is a
         // pure translation (the view), so its 3x3 is identity -> normal matrix identity.
-        Mtx nrmMtx;
-        guMtxIdentity(nrmMtx);
-        GX_LoadNrmMtxImm(nrmMtx, GX_PNMTX0);
+        // Constant, so load it only when not already resident (see the cache).
+        if (!sNrmIdentityLoaded) {
+            Mtx nrmMtx;
+            guMtxIdentity(nrmMtx);
+            GX_LoadNrmMtxImm(nrmMtx, GX_PNMTX0);
+            sNrmIdentityLoaded = true;
+        }
 
         int nl = mLighting.num_lights;
         if (nl > 8) {
@@ -965,6 +988,7 @@ static void lugx_draw_fps_overlay(int fps, float fw, float fh) {
     guMtxIdentity(mv);
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     GX_SetCurrentMtx(GX_PNMTX0);
+    lugx_gx_invalidate_mtx_cache(); // overlay loaded its own pos-mtx + projection
     GX_SetNumChans(1);
     GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_VTX, GX_SRC_VTX, 0, GX_DF_NONE, GX_AF_NONE);
     GX_SetNumTexGens(0);
@@ -1019,7 +1043,11 @@ void lugx_fps_overlay(float fbWidth, float fbHeight) {
 void GfxRenderingAPIGX::StartFrame() {}
 
 void GfxRenderingAPIGX::EndFrame() {
-    GX_DrawDone();
+    // No GP sync here. The window backend's SwapBuffersEnd issues the fps overlay and
+    // GX_CopyDisp, then a single GX_DrawDone that waits for the whole frame (geometry +
+    // overlay + copy). A GX_DrawDone here would just stall the CPU waiting for the GP to
+    // drain the game geometry before we even queue the copy, then block again - the GP
+    // processes the FIFO in order, so one sync after the copy is sufficient.
 }
 
 void GfxRenderingAPIGX::FinishRender() {}
@@ -1083,6 +1111,7 @@ void GfxRenderingAPIGX::ClearFramebuffer(bool color, bool depth) {
     Mtx ident;
     guMtxIdentity(ident);
     GX_LoadPosMtxImm(ident, GX_PNMTX0);
+    lugx_gx_invalidate_mtx_cache(); // clear loaded its own pos-mtx + projection
 
     // Flat-colour TEV (the clear colour rides COLOR0 as the material).
     GX_SetNumChans(1);

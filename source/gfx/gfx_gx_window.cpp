@@ -17,7 +17,10 @@ extern "C" void bootflush(void);
 
 namespace Fast {
 
-#define LUGX_FIFO_SIZE (256 * 1024)
+// The GP drains the FIFO continuously, so it only needs to buffer producer/consumer
+// rate mismatch, not a whole frame; 256K down to 2M measured identical, so 128K (well
+// above the 64K GX minimum) is ample and reclaims RAM on the 24MB GameCube.
+#define LUGX_FIFO_SIZE (128 * 1024)
 
 // VI field counter, bumped by the post-retrace interrupt. libogc has no
 // GetRetraceCount, so track it here to pace presents to a target framerate
