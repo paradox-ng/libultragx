@@ -2925,19 +2925,24 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         // that the vertex shader turns into a lit color (and texgen UVs).
         const bool normals_in_shade = (mTriCcOptions & SHADER_OPT(LIGHTING)) != 0;
         if (mTriComb->usedShade || normals_in_shade) {
+            // Reciprocal multiply instead of a float divide by 255 (a non-power-of-2 the
+            // compiler can't fold): ~17-cycle fdivs -> ~4-cycle fmuls on the Gekko/Broadway,
+            // per colour component per vertex. The result feeds an 8-bit quantise, so the
+            // 1-ULP difference from exact division is discarded (pixel-identical).
+            constexpr float kInv255 = 1.0f / 255.0f;
             if (normals_in_shade) {
                 mBufVbo[mBufVboLen++] = (float)v_arr[i]->normal[0];
                 mBufVbo[mBufVboLen++] = (float)v_arr[i]->normal[1];
                 mBufVbo[mBufVboLen++] = (float)v_arr[i]->normal[2];
             } else {
-                mBufVbo[mBufVboLen++] = v_arr[i]->color.r / 255.0f;
-                mBufVbo[mBufVboLen++] = v_arr[i]->color.g / 255.0f;
-                mBufVbo[mBufVboLen++] = v_arr[i]->color.b / 255.0f;
+                mBufVbo[mBufVboLen++] = v_arr[i]->color.r * kInv255;
+                mBufVbo[mBufVboLen++] = v_arr[i]->color.g * kInv255;
+                mBufVbo[mBufVboLen++] = v_arr[i]->color.b * kInv255;
             }
             if (mTriUseAlpha) {
                 // Raw vertex alpha; the standard-fog "shade alpha = 1.0" override
                 // is applied in the vertex shader based on the fog mode.
-                mBufVbo[mBufVboLen++] = v_arr[i]->color.a / 255.0f;
+                mBufVbo[mBufVboLen++] = v_arr[i]->color.a * kInv255;
             }
         }
 
