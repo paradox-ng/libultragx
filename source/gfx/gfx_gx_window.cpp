@@ -28,6 +28,11 @@ static void lugx_on_retrace(u32 cnt) {
     s_viRetraceCount = cnt;
 }
 
+// Draw the on-screen fps counter (defined in the GX rendering backend). Called at
+// the end of the frame, just before the EFB is copied out, with the full framebuffer
+// size (the caller sets a matching full-screen viewport first).
+void lugx_fps_overlay(float fbWidth, float fbHeight);
+
 void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/, bool /*startFullScreen*/,
                               uint32_t width, uint32_t height, int32_t /*posX*/, int32_t /*posY*/) {
     if (mInitialized) {
@@ -147,6 +152,13 @@ void GfxWindowBackendGX::SwapBuffersEnd() {
     if (!mInitialized) {
         return;
     }
+    // Draw the fps counter onto the EFB before it is copied out. Set a full-screen
+    // viewport + scissor here (the window knows the real render mode) so the overlay
+    // is not placed through whatever sub-viewport the last game draw left.
+    GXRModeObj* rm = (GXRModeObj*)mRmode;
+    GX_SetViewport(0.0f, 0.0f, (f32)rm->fbWidth, (f32)rm->efbHeight, 0.0f, 1.0f);
+    GX_SetScissor(0, 0, rm->fbWidth, rm->efbHeight);
+    lugx_fps_overlay((float)rm->fbWidth, (float)rm->efbHeight);
     GX_CopyDisp(mFrameBuffer[mFbIndex], GX_TRUE);
     GX_DrawDone();
     VIDEO_SetNextFramebuffer(mFrameBuffer[mFbIndex]);

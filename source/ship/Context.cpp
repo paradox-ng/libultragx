@@ -2,6 +2,7 @@
 
 #include "platform/paths.h"
 #include "platform/sd.h"
+#include "platform/lugx_config.h"
 #include "ship/resource/ResourceManager.h"
 #include "ship/resource/archive/ArchiveManager.h"
 #include "ship/resource/archive/O2rArchive.h"
@@ -99,7 +100,12 @@ std::shared_ptr<Context> Context::CreateUninitializedInstance(const std::string&
 }
 
 bool Context::InitConfiguration() {
-    return true; // config is CVar-backed; nothing to load from disk on console
+    // Read config.ini next to the o2r (e.g. sd:/Ghostship/config.ini) for the boot
+    // settings libultragx applies (currently the display aspect ratio). Runs after
+    // lugx_sd_mount() set sBaseDir. Game CVars remain their defaults.
+    std::string path = (sBaseDir.empty() ? std::string("sd:/") : sBaseDir) + "config.ini";
+    lugx_config_load(path.c_str());
+    return true;
 }
 
 bool Context::InitConsoleVariables() {

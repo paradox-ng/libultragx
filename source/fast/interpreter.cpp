@@ -27,6 +27,7 @@
 
 #include "fast/interpreter.h"
 #include "fast/lus_gbi.h"
+#include "platform/lugx_config.h"
 #include "fast/backends/gfx_window_manager_api.h"
 #include "fast/backends/gfx_rendering_api.h"
 
@@ -2077,7 +2078,12 @@ float Interpreter::AdjXForAspectRatio(float x) const {
         (!mActiveFrameBuffer->second.resize || mActiveFrameBuffer->second.forceFixedAspect)) {
         return x;
     } else {
-        return x * (4.0f / 3.0f) / ((float)mCurDimensions.width / (float)mCurDimensions.height);
+        // Use the (possibly overridden) aspect_ratio field rather than the raw
+        // framebuffer width/height, so anamorphic widescreen works: on console the
+        // framebuffer stays 4:3 but aspect_ratio can be set to 16:9, matching what
+        // GameEngine_GetAspectRatio feeds the game's HUD/FOV. Identical to the old
+        // width/height expression whenever aspect_ratio == width/height (i.e. 4:3).
+        return x * (4.0f / 3.0f) / mCurDimensions.aspect_ratio;
     }
 }
 
@@ -6201,7 +6207,10 @@ void Interpreter::StartFrame() {
         // Avoid division by zero
         mCurDimensions.height = 1;
     }
-    mCurDimensions.aspect_ratio = (float)mCurDimensions.width / (float)mCurDimensions.height;
+    // Render aspect ratio from config.ini (auto/4:3/16:9). The framebuffer stays
+    // 4:3; only this value changes, so widescreen is anamorphic (no stretch) and
+    // drives the game's FOV/HUD (GameEngine_GetAspectRatio) and AdjXForAspectRatio.
+    mCurDimensions.aspect_ratio = lugx_config_aspect_ratio();
 
     // Update the framebuffer sizes when the viewport or native dimension changes
     if (mCurDimensions.width != mPrvDimensions.width || mCurDimensions.height != mPrvDimensions.height ||

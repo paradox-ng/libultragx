@@ -4,9 +4,11 @@
 
 #include "gfx/gfx_gx_tex.h"
 #include "gfx/gfx_gx_state.h"
+#include "platform/lugx_config.h"
 
 #include <gccore.h>
 #include <ogc/gu.h>
+#include <ogc/lwp_watchdog.h> // gettime / ticks_to_microsecs (fps counter)
 #include <malloc.h>
 #include <cstring>
 #include <cmath>
@@ -881,6 +883,138 @@ void GfxRenderingAPIGX::Init() {
 }
 
 void GfxRenderingAPIGX::OnResize() {}
+
+// --- on-screen fps counter (7-segment, drawn in EndFrame) ----------------------
+//
+// Rendered in-game (not via a host overlay) so it is visible on real hardware.
+// Two green 7-segment digits over a dark box in the top-left, gated on config.ini.
+
+// Segment bitmasks for 0-9. Bits: a(top) b(top-right) c(bottom-right) d(bottom)
+// e(bottom-left) f(top-left) g(middle).
+static const unsigned char kFpsSeg[10] = {
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F,
+};
+
+// Framebuffer size for the pixel->NDC mapping, set per frame in lugx_draw_fps_overlay.
+static float s_fpsFw = 640.0f, s_fpsFh = 480.0f;
+
+// Draw a filled rect given in pixel space (0..fw across, 0..fh down), converting to
+// NDC (-1..1, y up) fed through the identity projection set up by the caller. The
+// pixel->NDC path (not GX_ORTHOGRAPHIC) is what actually works here: a loaded ortho
+// projection was being overridden by the game's leftover perspective, placing the
+// overlay through the last 3D object's transform instead of the screen.
+static void lugx_fps_rect(float px, float py, float pw, float ph, u8 r, u8 g, u8 b) {
+    const float x0 = px / (s_fpsFw * 0.5f) - 1.0f;
+    const float x1 = (px + pw) / (s_fpsFw * 0.5f) - 1.0f;
+    const float y0 = 1.0f - py / (s_fpsFh * 0.5f);
+    const float y1 = 1.0f - (py + ph) / (s_fpsFh * 0.5f);
+    GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
+    GX_Position3f32(x0, y0, 0.0f);
+    GX_Color4u8(r, g, b, 255);
+    GX_Position3f32(x1, y0, 0.0f);
+    GX_Color4u8(r, g, b, 255);
+    GX_Position3f32(x1, y1, 0.0f);
+    GX_Color4u8(r, g, b, 255);
+    GX_Position3f32(x0, y1, 0.0f);
+    GX_Color4u8(r, g, b, 255);
+    GX_End();
+}
+
+static void lugx_fps_digit(int d, float x, float y, float dw, float dh, float t) {
+    if (d < 0 || d > 9) {
+        return;
+    }
+    const unsigned m = kFpsSeg[d];
+    const float half = dh * 0.5f;
+    const u8 R = 0, G = 255, B = 80; // bright green
+    if (m & 0x01) lugx_fps_rect(x + t, y, dw - 2 * t, t, R, G, B);                   // a
+    if (m & 0x02) lugx_fps_rect(x + dw - t, y + t, t, half - t, R, G, B);            // b
+    if (m & 0x04) lugx_fps_rect(x + dw - t, y + half, t, half - t, R, G, B);         // c
+    if (m & 0x08) lugx_fps_rect(x + t, y + dh - t, dw - 2 * t, t, R, G, B);          // d
+    if (m & 0x10) lugx_fps_rect(x, y + half, t, half - t, R, G, B);                  // e
+    if (m & 0x20) lugx_fps_rect(x, y + t, t, half - t, R, G, B);                     // f
+    if (m & 0x40) lugx_fps_rect(x + t, y + half - t * 0.5f, dw - 2 * t, t, R, G, B); // g
+}
+
+static void lugx_draw_fps_overlay(int fps, float fw, float fh) {
+    if (fps < 0) {
+        fps = 0;
+    }
+    if (fps > 99) {
+        fps = 99;
+    }
+    // 2D screen-space state for flat quads (0..640 x 0..480, y down). No texture,
+    // depth or blend. This is the last draw before the EFB copy, so it needn't
+    // restore the interpreter's state (StartFrame/DrawTriangles re-set it next frame).
+    // Force a full-screen viewport + scissor: the game's last draw leaves a sub /
+    // decal-biased viewport, which would otherwise place and scale the overlay wrong.
+    // Viewport + scissor are set full-screen by the caller (the window backend,
+    // which knows the real framebuffer size); we load the matching ortho and draw.
+    s_fpsFw = fw;
+    s_fpsFh = fh;
+    // Identity projection so vertices are fed directly in NDC (clip space), bypassing
+    // any leftover game projection/posmtx (lugx_fps_rect maps pixel coords into NDC).
+    Mtx44 proj;
+    memset(proj, 0, sizeof(proj));
+    proj[0][0] = 1.0f;
+    proj[1][1] = 1.0f;
+    proj[2][2] = 1.0f;
+    proj[3][3] = 1.0f;
+    GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
+    Mtx mv;
+    guMtxIdentity(mv);
+    GX_LoadPosMtxImm(mv, GX_PNMTX0);
+    GX_SetCurrentMtx(GX_PNMTX0);
+    GX_SetNumChans(1);
+    GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_VTX, GX_SRC_VTX, 0, GX_DF_NONE, GX_AF_NONE);
+    GX_SetNumTexGens(0);
+    GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+    GX_SetNumTevStages(1);
+    GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+    GX_SetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_COPY);
+    GX_SetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
+    GX_SetColorUpdate(GX_TRUE);
+    GX_SetAlphaUpdate(GX_TRUE);
+    GX_SetCullMode(GX_CULL_NONE);
+    GX_ClearVtxDesc();
+    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+
+    // Two digits over a dark box, top-right (pixel coords in a 640x480-style space).
+    const float dw = 15.0f, dh = 24.0f, t = 4.0f, gap = 6.0f, y = 12.0f;
+    const float x = fw - 14.0f - (dw * 2.0f + gap);
+    lugx_fps_rect(x - 5, y - 5, dw * 2 + gap + 10, dh + 10, 0, 0, 0); // dark backing box
+    lugx_fps_digit(fps / 10, x, y, dw, dh, t);
+    lugx_fps_digit(fps % 10, x + dw + gap, y, dw, dh, t);
+}
+
+// Measure the present rate and draw the fps overlay. Called from the window
+// backend right before the EFB->XFB copy, so it lands on the final image (after
+// any render-to-framebuffer resolve the game did).
+void lugx_fps_overlay(float fbWidth, float fbHeight) {
+    if (!g_lugx_config.fps_counter) {
+        return;
+    }
+    static uint64_t lastTick = 0;
+    static int frames = 0;
+    static int fpsValue = 0;
+    const uint64_t now = gettime();
+    if (lastTick == 0) {
+        lastTick = now;
+    }
+    frames++;
+    const uint64_t elapsed = ticks_to_microsecs(now - lastTick);
+    if (elapsed >= 500000) {
+        // Round to nearest (e.g. 29.97 -> 30) rather than truncating (-> 29).
+        fpsValue = (int)(((uint64_t)frames * 1000000ull + elapsed / 2) / elapsed);
+        frames = 0;
+        lastTick = now;
+    }
+    lugx_draw_fps_overlay(fpsValue, fbWidth, fbHeight);
+}
 
 void GfxRenderingAPIGX::StartFrame() {}
 

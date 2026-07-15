@@ -1,0 +1,114 @@
+#include "lugx_config.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#ifdef HW_RVL
+#include <ogc/conf.h>
+#endif
+
+// Defaults: aspect auto (Wii system setting; GameCube 4:3), fps counter on.
+LugxConfig g_lugx_config = {
+    /* aspect      */ LUGX_ASPECT_AUTO,
+    /* fps_counter */ true,
+};
+
+static const char* kTemplate =
+    "# Ghostship (libultragx) settings. Edit and reboot to apply.\n"
+    "\n"
+    "# Display aspect ratio.\n"
+    "#   auto = use the Wii's system 4:3/16:9 setting (GameCube defaults to 4:3)\n"
+    "#   4:3  = force standard\n"
+    "#   16:9 = force widescreen (anamorphic; looks right on a 16:9 TV)\n"
+    "aspect_ratio = auto\n"
+    "\n"
+    "# On-screen framerate counter (top-right). Handy while testing on hardware.\n"
+    "#   true | false\n"
+    "fps_counter = true\n";
+
+// Trim leading/trailing ASCII whitespace in place, returning the start.
+static char* trim(char* s) {
+    while (*s && isspace((unsigned char)*s)) {
+        s++;
+    }
+    char* end = s + strlen(s);
+    while (end > s && isspace((unsigned char)end[-1])) {
+        *--end = '\0';
+    }
+    return s;
+}
+
+static bool parse_bool(const char* v, bool dflt) {
+    if (!strcasecmp(v, "true") || !strcasecmp(v, "on") || !strcasecmp(v, "1") || !strcasecmp(v, "yes")) {
+        return true;
+    }
+    if (!strcasecmp(v, "false") || !strcasecmp(v, "off") || !strcasecmp(v, "0") || !strcasecmp(v, "no")) {
+        return false;
+    }
+    return dflt;
+}
+
+static void apply_kv(const char* key, const char* val) {
+    if (!strcasecmp(key, "aspect_ratio")) {
+        if (!strcasecmp(val, "auto")) {
+            g_lugx_config.aspect = LUGX_ASPECT_AUTO;
+        } else if (!strcasecmp(val, "4:3") || !strcasecmp(val, "4_3") || !strcasecmp(val, "43")) {
+            g_lugx_config.aspect = LUGX_ASPECT_4_3;
+        } else if (!strcasecmp(val, "16:9") || !strcasecmp(val, "16_9") || !strcasecmp(val, "169")) {
+            g_lugx_config.aspect = LUGX_ASPECT_16_9;
+        }
+    } else if (!strcasecmp(key, "fps_counter")) {
+        g_lugx_config.fps_counter = parse_bool(val, g_lugx_config.fps_counter);
+    }
+}
+
+void lugx_config_load(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (f == NULL) {
+        // No config yet: keep the defaults and drop a commented template so the
+        // user has something to edit. A failed write is harmless.
+        FILE* w = fopen(path, "w");
+        if (w != NULL) {
+            fwrite(kTemplate, 1, strlen(kTemplate), w);
+            fclose(w);
+        }
+        return;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        char* hash = strpbrk(line, "#;");
+        if (hash != NULL) {
+            *hash = '\0';
+        }
+        char* eq = strchr(line, '=');
+        if (eq == NULL) {
+            continue;
+        }
+        *eq = '\0';
+        char* key = trim(line);
+        char* val = trim(eq + 1);
+        if (*key != '\0' && *val != '\0') {
+            apply_kv(key, val);
+        }
+    }
+    fclose(f);
+}
+
+float lugx_config_aspect_ratio(void) {
+    switch (g_lugx_config.aspect) {
+        case LUGX_ASPECT_16_9:
+            return 16.0f / 9.0f;
+        case LUGX_ASPECT_4_3:
+            return 4.0f / 3.0f;
+        case LUGX_ASPECT_AUTO:
+        default:
+#ifdef HW_RVL
+            // Wii exposes the user's 4:3/16:9 system-menu setting.
+            return (CONF_GetAspectRatio() == CONF_ASPECT_16_9) ? (16.0f / 9.0f) : (4.0f / 3.0f);
+#else
+            // GameCube has no such setting; default to 4:3.
+            return 4.0f / 3.0f;
+#endif
+    }
+}
