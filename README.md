@@ -7,8 +7,8 @@ that run natively on the Nintendo GameCube and Wii.
 Where libultraship targets modern PCs, libultragx targets the GameCube and Wii
 hardware directly through devkitPPC and libogc. It decodes the same Fast3D N64
 display lists and drives them through the GX fixed-function pipeline (TEV color
-combiner, hardware transform, lighting, and texturing) instead of a shader-based
-PC graphics API. It loads assets from the same `.otr` and `.o2r` archive files,
+combiner, hardware lighting and texturing) instead of a shader-based PC graphics
+API. It loads assets from the same `.otr` and `.o2r` archive files,
 keeping game data separate from the executable so a port ships its assets
 unchanged.
 
@@ -20,28 +20,42 @@ compile without modification.
 
 ## Status
 
-Bring-up, GameCube first. The GameCube (24 MB of RAM) is the constraint that
-drives the design; the Wii build is the secondary target and is what is currently
-tested under Dolphin.
+Super Mario 64, through the [Ghostship](https://github.com/HarbourMasters/Ghostship)
+fork, is playable on the Wii build (tested under Dolphin): it boots, renders the full
+game, plays music and sound effects, and reads and writes save files. The GameCube
+(24 MB of RAM) is the constraint that drives the design; the GameCube build compiles
+and links, but native GameCube runtime bring-up (SD access on the console) is still in
+progress, so the Wii build is what currently runs.
 
-- **Fast3D on GX.** The libultraship Fast3D interpreter is driven by an original
-  GX backend: TEV stages implement the N64 color combiner, with hardware
-  transform, lighting, and texturing in place of shaders. N64 F3D display lists
-  decoded from an `.o2r` archive render on hardware.
-- **Resource system.** `.o2r` archive mounting, CRC64 path hashing,
-  `ResourceManager`, and a `ResourceLoader` keyed on (format, type, version).
-  Binary factories cover the Fast3D types (display list, vertex, matrix, texture,
-  light) plus Blob and JSON. Class and method names track libultraship, so a
-  port's factory registrations build against libultragx unchanged.
-- **Framework.** `Ship::Context`, the `Ship::Window` abstraction with a Fast3D
-  window (`Fast::Fast3dWindow`), a `ControlDeck` reading the GameCube pad through
-  libogc, an event system, and the C bridges (resource, cvar, window, events).
+- **Rendering (Fast3D on GX).** The libultraship Fast3D interpreter is driven by an
+  original GX backend. TEV stages implement the N64 color combiner; lighting and
+  texturing use GX hardware. Vertex transform and near-plane clipping run on the CPU
+  (following the sm64-port Wii reference) and feed GX clip-space coordinates through a
+  pass-through projection. Native GX texture formats (RGB5A3, I, IA) keep texture
+  memory within the GameCube budget. The whole game renders: the 3D world, actors,
+  HUD, menus, dialogs, and the interactive title-screen head. Anti-aliasing is not yet
+  enabled.
+- **Audio.** The game's audio synthesis runs on the console and plays through the DSP
+  via libogc's asndlib, so music and sound effects work.
+- **Performance.** The game runs at its native 30 fps, with optional 60 fps frame
+  interpolation (the simulation stays at 30 fps; in-between frames are interpolated).
+  A per-triangle render-state cache in the interpreter keeps per-frame CPU within the
+  frame budget.
+- **Resource system.** `.o2r` archive mounting, CRC64 path hashing, `ResourceManager`,
+  and a `ResourceLoader` keyed on (format, type, version). Binary factories cover the
+  Fast3D types (display list, vertex, matrix, texture, light) and the audio types
+  (bank, sequence, sample), plus Blob and JSON. Class and method names track
+  libultraship, so a port's factory registrations build against libultragx unchanged.
+- **Framework.** `Ship::Context`, the `Ship::Window` abstraction with a Fast3D window
+  (`Fast::Fast3dWindow`), a `ControlDeck` reading the GameCube pad and Wii remote
+  through libogc, an event system, and the C bridges (resource, cvar, window, events,
+  audio).
 - **Platform.** SD card mounting (SD2SP2 / SD Gecko / Wii SD) and per-game path
-  resolution from `argv[0]`.
+  resolution from `argv[0]`. A plain-text `config.ini` beside the archive selects the
+  aspect ratio (4:3, 16:9, or the Wii's system setting), the on-screen fps counter,
+  and frame interpolation.
 
-Current focus is bringing up Super Mario 64 (via the Ghostship fork) against
-libultragx in place of libultraship. See `docs/ARCHITECTURE.md` for the design and
-roadmap.
+See `docs/ARCHITECTURE.md` for the design and roadmap.
 
 ## Building
 
