@@ -2234,6 +2234,7 @@ static bool CombineModeUsesShade(uint64_t combine_mode, bool is2Cyc) {
 
 void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
     LugxAccumScope _tp(&g_lugx_prof_tri_ticks); // profiler: per-triangle handler (incl. Flush->draw)
+    mCmdWasDraw = true; // this command drew; the Run loop won't re-dirty the decode after it
     struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];
     struct LoadedVertex* v2 = &mRsp->loaded_vertices[vtx2_idx];
     struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
@@ -2269,6 +2270,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRenderingState.cull_keep_sign = cull_keep_sign;
     }
 
+    // Decode the render state (combine/texture/shader/blend/depth) only when it may have
+    // changed since the last triangle - the command dispatcher sets mTriStateDirty on every
+    // non-triangle command. For a run of same-state triangles this whole block runs once and
+    // the outputs the vertex-buffer build needs are reused from the mTri* cache below. The
+    // block reads only RDP/RSP state (no per-vertex data), so caching it is safe. (Body kept
+    // at its original indent to avoid a 570-line reindent; braces balance across the gate.)
+    if (mTriStateDirty) {
     // depth_test is set when the fragment has a depth value to compare (either from vertex Z via
     // RSP G_ZBUFFER, or from the prim-depth register via G_ZS_PRIM) and Z_CMP is requested.
     bool zbuffer_enabled = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
@@ -2843,6 +2851,16 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+    // Cache the decode outputs the vertex-buffer build below reuses for the rest of this
+    // same-state run, then mark the decode clean until the next non-triangle command.
+    mTriCcOptions = cc_options;
+    mTriUseAlpha = use_alpha;
+    mTriComb = comb;
+    mTriUsedTextures[0] = usedTextures[0];
+    mTriUsedTextures[1] = usedTextures[1];
+    mTriStateDirty = false;
+    } // end: if (mTriStateDirty)
+
     // Per-batch y inversion for the vertex shader (z convention is per-backend
     // and lives in the shader templates).
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
@@ -2890,7 +2908,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         // runs in the vertex shader via the per-draw uv_transform uniforms, and
         // the clamp bounds are uniforms too.
         for (int t = 0; t < 2; t++) {
-            if (!usedTextures[t]) {
+            if (!mTriUsedTextures[t]) {
                 continue;
             }
             mBufVbo[mBufVboLen++] = v_arr[i]->u / 32.0f;
@@ -2905,8 +2923,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         // Shade is the only combiner source that still varies per vertex: it is
         // either the vertex color, or — under G_LIGHTING — the raw vertex normal
         // that the vertex shader turns into a lit color (and texgen UVs).
-        const bool normals_in_shade = (cc_options & SHADER_OPT(LIGHTING)) != 0;
-        if (comb->usedShade || normals_in_shade) {
+        const bool normals_in_shade = (mTriCcOptions & SHADER_OPT(LIGHTING)) != 0;
+        if (mTriComb->usedShade || normals_in_shade) {
             if (normals_in_shade) {
                 mBufVbo[mBufVboLen++] = (float)v_arr[i]->normal[0];
                 mBufVbo[mBufVboLen++] = (float)v_arr[i]->normal[1];
@@ -2916,7 +2934,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 mBufVbo[mBufVboLen++] = v_arr[i]->color.g / 255.0f;
                 mBufVbo[mBufVboLen++] = v_arr[i]->color.b / 255.0f;
             }
-            if (use_alpha) {
+            if (mTriUseAlpha) {
                 // Raw vertex alpha; the standard-fog "shade alpha = 1.0" override
                 // is applied in the vertex shader based on the fog mode.
                 mBufVbo[mBufVboLen++] = v_arr[i]->color.a / 255.0f;
@@ -3581,6 +3599,9 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
     mRdp->viewport_or_scissor_changed = true;
     mRsp->geometry_mode = 0;
 
+    // Rects set their own render state (combine/tile/other_mode/geometry) around the draw
+    // and restore it after, so force a decode for the rect and again for whatever follows.
+    mTriStateDirty = true;
     GfxSpTri1(MAX_VERTICES + 0, MAX_VERTICES + 1, MAX_VERTICES + 3, true);
     GfxSpTri1(MAX_VERTICES + 1, MAX_VERTICES + 2, MAX_VERTICES + 3, true);
 
@@ -3591,6 +3612,7 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
     if (cycle_type == G_CYC_COPY) {
         mRdp->other_mode_h = saved_other_mode_h;
     }
+    mTriStateDirty = true;
 }
 
 void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls,
@@ -6131,6 +6153,7 @@ void Interpreter::SpReset() {
     mRsp->current_num_lights = 2;
     mRsp->lights_changed = true;
     mMtxCurrentValid = false;
+    mTriStateDirty = true; // re-decode the render state for the first triangle of the frame
     mRsp->lookat[0].dir[0] = 0;
     mRsp->lookat[0].dir[1] = 127;
     mRsp->lookat[0].dir[2] = 0;
@@ -6414,7 +6437,14 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
             g_exec_stack.gfx_path.pop_back();
         }
+        // Per-triangle state-decode cache: a command that does not draw may have changed
+        // the render state, so mark the decode dirty after it. Draw commands (GfxSpTri1)
+        // set mCmdWasDraw and are left clean so a run of them reuses the cached decode.
+        mCmdWasDraw = false;
         gfx_step();
+        if (!mCmdWasDraw) {
+            mTriStateDirty = true;
+        }
     }
 
     Flush();

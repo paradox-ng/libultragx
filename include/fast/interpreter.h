@@ -613,6 +613,20 @@ class Interpreter {
     uint8_t mBatchMtxCount = 0;
     TransformUniforms mTransform{};
 
+    // Per-triangle state-decode cache. GfxSpTri1 re-derives the full render state (combine
+    // options, texture/tile setup, shader, blend/depth flags) for every triangle, but that
+    // state only changes on non-triangle DL commands. mTriStateDirty is set true by the
+    // command dispatcher after any non-triangle command; GfxSpTri1 runs the decode only when
+    // dirty, then reuses the cached outputs its vertex-buffer build needs for the run of
+    // same-state triangles that follows. Conservative (any non-tri command dirties), so it is
+    // never stale - at worst one redundant decode.
+    bool mTriStateDirty = true;
+    bool mCmdWasDraw = false; // set by GfxSpTri1; the Run loop dirties the decode after non-draws
+    uint64_t mTriCcOptions = 0;
+    ColorCombiner* mTriComb = nullptr;
+    bool mTriUseAlpha = false;
+    bool mTriUsedTextures[2] = { false, false };
+
     uint8_t AppendMtxHistory(const float m[4][4], float aspectScale);
     uint8_t GetIdentityMtxSlot();
 
