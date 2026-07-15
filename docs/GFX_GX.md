@@ -1,71 +1,85 @@
 # gfx_gx: the GX rendering backend
 
 `gfx_gx` is the Fast3D rendering backend for GameCube/Wii. It implements
-`Fast::GfxRenderingAPI` (the interface the Fast3D interpreter calls) on top of GX.
+`Fast::GfxRenderingAPI` (the interface the Fast3D interpreter calls) on top of GX,
+and drives the full game.
 
-## Status
+## Components
 
-**Primitives - done and visually verified on rendered frames (the gfxdemo app):**
-- `source/gfx/gfx_gx_tev` - N64 color combiner `(A-B)*C+D` -> GX TEV. General
-  decoder over the real `(A,B,C,D)` inputs. `B==0 -> A*C+D` and `D==B -> lerp(B,A,C)`,
-  one TEV stage each; covers SM64's combiner set. Sources: TEXEL0->TEXC/TEXA,
-  SHADE->RASC/RASA, PRIM->TEV reg0, ENV->TEV reg1, COMBINED->CPREV.
-- `source/gfx/gfx_gx_tex` - linear RGBA32 -> `GX_TF_RGBA8` tiled (4x4 tiles, AR
-  plane then GB plane). Fast3D pre-decodes all N64 texture formats to RGBA32.
-- `source/gfx/gfx_gx_state` - depth test/write, alpha compare (cutout), src-alpha blend.
+- `source/gfx/gfx_gx_tev` - N64 color combiner `(A-B)*C+D` -> GX TEV. A general
+  decoder over the real `(A,B,C,D)` inputs (`B==0 -> A*C+D`, `D==B -> lerp(B,A,C)`,
+  one TEV stage each), covering SM64's combiner set. Sources map TEXEL0 -> TEXC/TEXA,
+  SHADE -> RASC/RASA, PRIM and ENV -> TEV registers, COMBINED -> CPREV.
+- `source/gfx/gfx_gx_tex` - packs Fast3D's decoded RGBA32 into native GX texture
+  formats: `GX_TF_RGB5A3` (16-bit, lossless for the N64's dominant 16-bit RGBA), and
+  `GX_TF_I4`/`I8` and `GX_TF_IA4`/`IA8` for intensity/alpha. GX block geometry differs
+  per format (I4 8x8, I8/IA4 8x4, IA8/RGB5A3 4x4), which the tiling and size math
+  match; getting that wrong corrupts the texture.
+- `source/gfx/gfx_gx_state` - depth test/write, alpha compare (cutout), blend, cull.
+- `source/gfx/gfx_gx_api.cpp` (`Fast::GfxRenderingAPIGX`) - implements the ~40
+  `GfxRenderingAPI` methods: shader/combiner lookup, texture binding, the frame
+  lifecycle, and `DrawTriangles`. It renders direct to screen, so the
+  render-to-texture / ImGui-texture methods are inert. `lugx_create_gx_rendering_api()`
+  is the factory.
+- `source/gfx/gfx_gx_window.cpp` (`Fast::GfxWindowBackendGX`) - VI/GX init,
+  framebuffer allocation, vsync, present pacing, and the on-screen fps/profiler
+  overlay.
 
-**Backend class - conforms to the contract, builds:**
-- `Fast::GfxRenderingAPIGX` (`include/fast/backends/gfx_gx.h`,
-  `source/gfx/gfx_gx_api.cpp`) implements all ~40 `GfxRenderingAPI` methods. State,
-  textures (with a texture table + per-tile binding), and the frame lifecycle are
-  wired to the primitives above. Renders direct to screen, so the framebuffer /
-  ImGui-texture methods are inert. `lugx_create_gx_rendering_api()` is the factory.
+## The transform model (software T&L)
 
-## The remaining integration (one coupled unit, gated on the interpreter)
+GX has no vertex shaders, and its fixed-function pipeline expects an affine 3x4
+modelview and a 4x4 projection **separately**, with a per-batch matrix. The Fast3D
+interpreter instead hands the backend object-space vertices plus a per-vertex
+matrix-palette slot, where each slot is a **combined** N64 MVP (projection folded
+into the modelview, carrying a perspective row). Those two models do not line up: a
+combined perspective-bearing matrix fits neither GX slot.
 
-Two interlocking TODOs that cannot be validated until the Fast3D interpreter
-compiles for GC and feeds real display lists:
-
-### 1. Shader-id -> combiner decode
-`CreateAndLoadNewShader(id0, id1)` receives LUS's 64-bit packed RDP combine state.
-Decoding it yields (a) the `LugxCombiner` for TEV and (b) **which vbo fields are
-present** (used textures, shade, alpha) - which `DrawTriangles` needs to parse the
-buffer. So this must land with DrawTriangles.
-
-### 2. DrawTriangles + the transform model
-The interpreter packs an interleaved float vbo, per vertex:
+libultragx resolves this the way the sm64-port Wii branch does - software T&L on the
+CPU. The interpreter packs an interleaved float vbo, per vertex:
 
 ```
 x, y, z, w,            // object-space position (4 floats)
-mtxIndex,              // matrix-palette slot for THIS vertex (1 float)
+mtxIndex,              // matrix-palette slot for this vertex (1 float)
 u/32, v/32,            // per used texture tile (2 floats each)
-shade.rgb [, shade.a]  // if shade used (3 or 4 floats); or vertex normal under G_LIGHTING
+shade.rgb [, shade.a]  // if shade used; or the vertex normal under G_LIGHTING
 ```
 
-Stride = `buf_vbo_len / (buf_vbo_num_tris * 3)`. The position transform runs in
-LUS's vertex shader: each vertex is multiplied by `mtx_palette[mtxIndex]` (set via
-`SetTransformUniforms`), then `y_scale` flips y.
+`DrawTriangles` transforms each vertex to clip space on the CPU
+(`clip = obj * mtx_palette[slot]`), does near-plane clipping there
+(Sutherland-Hodgman, interpolating the attributes), and feeds GX the clip-space
+coordinates through a fixed pass-through perspective (identity position matrix;
+`[0][0]=[1][1]=1`, `[2][2]=-n/(f-n)`, `[2][3]=-nf/(f-n)`, `[3][2]=-1`, with SM64's
+`n`/`f`). GX then performs only the perspective divide and rasterization. 2D
+rectangles arrive pre-transformed (their palette matrix is affine) and take the
+simpler single-matrix path.
 
-**The crux:** `mtx_palette[slot]` is a *combined* N64 MVP (projection x modelview),
-with a perspective row. GX's fixed-function pipeline expects modelview (affine 3x4
-position matrix) and projection (4x4) *separately*, and the matrix index is
-*per vertex*. Options to evaluate on hardware:
-- **CPU transform**: multiply object pos by the palette matrix on PowerPC, then
-  pass the result to GX. Handles per-vertex matrices correctly; perspective-correct
-  texturing needs care (GX wants `w`, but GX positions are 3-component, so this
-  needs the divided NDC + a w-restoring approach or accepting screen-linear UVs).
-- **Load MVP as GX projection** (identity position matrix), letting GX do the
-  perspective divide (perspective-correct UVs for free). Breaks the per-vertex
-  matrix case, but most SM64 draws use a single matrix per batch.
+Lighting uses GX hardware: the interpreter passes vertex normals plus per-light
+direction coefficients, and GX computes the clamped diffuse term into the vertex
+colour channel.
 
-This decision needs iteration against real geometry, so it waits for the interpreter.
+## Performance
 
-## Path to the interpreter driving gfx_gx
-1. Decode shader ids + implement DrawTriangles (above), iterating on the GX transform.
-2. Get `src/fast/interpreter.cpp` compiling for GC - pulls in `prism` and the
-   resource types (`Texture`, `DisplayList`), which is where `ResourceManager` +
-   the `.otr`/`.o2r` zip reader finally land.
-3. Implement `GfxWindowBackendGX : GfxWindowBackend` (VI/GX init, vsync, timing;
-   mouse/keyboard no-ops) and register GX in `Fast3dWindow`'s backend selection.
-4. Cross-compile Ghostship against libultragx; chase link errors to flesh out the
-   remaining `ship/` framework (Window, ResourceManager, ...).
+`DrawTriangles` itself is a small fraction of the frame; the interpreter's
+per-triangle handler dominates. To keep it in budget, the interpreter caches the
+per-triangle render-state decode (combiner options, per-tile texture setup, shader
+selection, blend/depth flags) and re-derives it only when a non-drawing DL command
+may have changed the state, reusing it across the run of same-state triangles that
+follows. The backend likewise caches its constant matrix loads (the pass-through
+projection, the identity position and normal matrices) and skips them when already
+resident.
+
+30 fps is the native rate. Frame interpolation (a `config.ini` option) renders one
+interpolated in-between frame per logic tick for 60 fps motion without running the
+simulation at double speed.
+
+## Not yet done
+
+- Antialiasing. GX 3-sample MSAA needs a reduced-height EFB (`GX_PF_RGB565_Z16` + an
+  AA render mode), which changes the framebuffer dimensions and needs the surrounding
+  dimensional plumbing.
+- Render-to-texture. The EFB-copy-to-texture path is stubbed (the game renders direct
+  to the EFB), so effects that read back the framebuffer are inert.
+- Hardware T&L. The transform stays on the CPU; moving it onto GX would require the
+  interpreter to keep modelview and projection separate and to feed native quantized
+  vertex arrays (the N64 vertices are already s16/s8). This is the largest structural
+  optimization and is documented against the GX manual's viewing chapter.

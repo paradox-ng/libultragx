@@ -9,15 +9,16 @@ backend bolted onto libultraship and **not** a fork of it. It is a drop-in
 keeps its source unchanged, and runs natively on GX via libogc.
 
 Primary target: **GameCube** (Gekko 485 MHz, 24 MB RAM + 3 MB GPU RAM,
-big-endian). Secondary target: **Wii** (Broadway 729 MHz, 88 MB). GX is identical
-on both, so one rendering backend serves both; the GameCube RAM budget is the
-real constraint and drives every "lean" decision here.
+big-endian). Secondary target: **Wii** (Broadway 729 MHz, 88 MB), which is what
+currently runs and is tested under Dolphin. GX is identical on both, so one
+rendering backend serves both; the GameCube RAM budget is the real constraint and
+drives every "lean" decision here.
 
 ## Where libultragx sits
 
 The N64 decomp games (Ghostship/SM64 first) are not rewritten. They call a
-per-game C glue layer (`GameEngine_*`), which calls the framework. We replace the
-framework, not the glue:
+per-game C glue layer (`GameEngine_*`), which calls the framework. libultragx
+replaces the framework, not the glue:
 
 ```
 SM64 decomp C   (unchanged)
@@ -31,48 +32,61 @@ GameEngine_* glue   (per-game, C; unchanged: GameEngine_LoadSequence, _LoadDialo
 
 The games `#include <libultraship.h>` and call into the `Ship::` namespace
 (`Ship::Context::GetInstance` is the hub, used ~200x in Ghostship). libultragx
-must present that same API.
+presents that same API.
 
 ## Module layout (mirrors libultraship)
 
-libultraship at the pinned commit (`11ad2a55`, the version Ghostship uses) splits
-into three layers. libultragx mirrors them so the include paths and namespaces
-match:
+libultragx mirrors libultraship's three layers so the include paths and namespaces
+match. All three are implemented:
 
-| Layer | libultraship | libultragx plan |
+| Layer | libultraship | libultragx |
 |---|---|---|
-| `fast/` | Fast3D: `gfx_pc` interpreter, `GfxRenderingAPI` (`include/fast/backends/gfx_rendering_api.h`), backends (`gfx_opengl`, ...) | **Reuse** `gfx_pc` + the API; **add `gfx_gx`** backend + a libogc window-manager backend |
-| `ship/` | 102 files: `Context`, `ResourceManager` + `Archive` + `ResourceFactory*`, `Window`, `ControlDeck`, `BinaryReader/Writer`, audio, GUI | **Reimplement lean** on libogc/GX. The bulk of the work |
-| `libultraship/` | umbrella `<libultraship.h>`, C `bridge`/CVar, libultra stubs | **Reimplement API-identical** so game includes are unchanged |
+| `fast/` | Fast3D: the `gfx_pc` interpreter, `GfxRenderingAPI`, backends (`gfx_opengl`, ...) | Reuses the Fast3D interpreter and the API; adds the `gfx_gx` GX backend and a libogc window backend |
+| `ship/` | `Context`, `ResourceManager` + `Archive` + `ResourceFactory*`, `Window`, `ControlDeck`, `BinaryReader/Writer`, audio, GUI | Reimplemented lean on libogc/GX; the ImGui/GUI windows are no-op stubs |
+| `libultraship/` | umbrella `<libultraship.h>`, C `bridge`/CVar, libultra stubs | Reimplemented API-identical so game includes are unchanged |
 
-### Per-module decisions
+### Per-module mapping
 
-| Piece (usage in Ghostship) | Plan | Backed by |
+| Piece (usage in Ghostship) | libultragx | Backed by |
 |---|---|---|
-| `Ship::Context` (~200x) | reimplement: singleton hub, app dirs, accessors | libfat paths |
-| Fast3D `gfx_pc` + `GfxRenderingAPI` | reuse as-is, write GX backend | - |
-| `gfx_gx` (new) | **the hard piece**: N64 combiner -> TEV mapping | GX TEV |
-| `ResourceManager`, `Archive`, `ResourceFactoryBinary/XML`, `IResource`, `ResourceInitData` | reimplement | libfat + zip reader |
-| `BinaryReader/Writer`, `File`, `Endianness::Big`, `SeekOffsetType` | reimplement (endianness is load-bearing) | - |
-| `ControlDeck`, `ControllerStick`, `PhysicalDeviceType` | reimplement | libogc PAD/WPAD |
-| `Ship::AudioBackend` | reimplement | libogc ASND |
-| `bridge.h`, `consolevariablebridge.h` (CVar) | reimplement lean | - |
-| `libultra/types.h`, `libultra/controller.h` | reimplement (OS stubs) | libogc threads/DMA |
-| `GuiWindow`, `ConsoleWindow`, `ShaderSettingsWindow`, `*DebuggerWindow`, `Font` | **stub as no-ops** (the ImGui "PC baggage" we drop) | - |
-| `Window` / window-manager | reimplement = our VI/GX bring-up | libogc VI |
+| `Ship::Context` (~200x) | singleton hub, app dirs, accessors | libfat paths |
+| Fast3D `gfx_pc` + `GfxRenderingAPI` | reused; drives the GX backend | - |
+| `gfx_gx` | N64 combiner -> TEV, software T&L, native textures | GX TEV |
+| `ResourceManager`, `Archive`, `ResourceFactoryBinary/XML`, `IResource` | reimplemented | libfat + streaming zip reader |
+| `BinaryReader/Writer`, `File`, `Endianness`, `SeekOffsetType` | reimplemented (endianness is load-bearing on big-endian PPC) | - |
+| `ControlDeck`, `ControllerStick`, `PhysicalDeviceType` | reimplemented | libogc PAD/WPAD |
+| audio output | reimplemented (the game's synthesis, played on the DSP) | libogc ASND |
+| `bridge.h`, `consolevariablebridge.h` (CVar) | reimplemented lean | - |
+| `libultra/types.h`, `libultra/controller.h` | reimplemented (OS stubs) | libogc threads/DMA |
+| `GuiWindow`, `ConsoleWindow`, `*DebuggerWindow`, `Font` | no-op stubs (the ImGui "PC baggage") | - |
+| `Window` / window-manager | VI/GX bring-up | libogc VI |
 
-## Rendering: the core problem
+## Rendering
 
-GameCube/Wii have no shaders, only GX's fixed-function **TEV** (8 stages). N64
-Fast3D combiner modes are a finite, enumerable set, so mapping them to TEV is a
-lookup-table problem, not a shader compiler. The reference is the Wii U port's
-`gx2_shader_gen.c` (in `HarbourMasters/libultraship-wiiu` /
-`GaryOderNichts/Shipwright`), which generates GX2 shaders from the same combiners;
-we translate that logic to **TEV stage setup** instead.
+GameCube/Wii have no shaders, only GX's fixed-function **TEV** combiner. N64 Fast3D
+combiner modes are a finite, enumerable set, so mapping them to TEV is a decode, not
+a shader compiler. `gfx_gx` implements the `GfxRenderingAPI` interface (vertex
+submission, texture upload, combiner -> TEV, render state):
 
-`gfx_gx` implements the `GfxRenderingAPI` interface (vertex submission, texture
-upload, combiner -> TEV, render state). Transform and lighting run on the
-PowerPC CPU since GX has no vertex shaders.
+- **Combiner.** The N64 color combiner `(A-B)*C+D` is decoded over its real
+  `(A,B,C,D)` inputs into TEV stage setup (`gfx_gx_tev`), covering SM64's combiner
+  set.
+- **Textures.** N64 texture data is packed into native GX formats -
+  `GX_TF_RGB5A3` for the N64's dominant 16-bit RGBA (lossless) and `GX_TF_I*`/
+  `GX_TF_IA*` for intensity/alpha (`gfx_gx_tex`) - keeping texture memory within the
+  GameCube budget rather than expanding everything to 32-bit.
+- **Transform.** Vertex transform and near-plane clipping run on the PowerPC CPU
+  (following the sm64-port Wii reference): each vertex is multiplied by its
+  matrix-palette slot into clip space and fed to GX with a fixed pass-through
+  perspective, so GX performs only the perspective divide and rasterization.
+  Lighting uses GX hardware (light objects + the diffuse channel). This software
+  T&L sidesteps GX's separate affine-modelview / projection matrix model, which does
+  not map cleanly onto the interpreter's combined per-object MVP; moving the
+  transform onto GX hardware is a possible future rewrite (see the GX manual notes).
+
+To keep the per-frame CPU cost down, the interpreter caches the per-triangle
+render-state decode: it is re-derived only when a non-drawing DL command may have
+changed the state, and reused across the run of same-state triangles that follows.
 
 ## Build
 
@@ -82,11 +96,11 @@ devkitPPC + libogc, built in Docker (`devkitpro/devkitppc`), tested on Dolphin
 ```sh
 ./build.sh                 # -> libultragx-gamecube.dol  (HW_DOL, PAD input)
 ./build.sh PLATFORM=wii    # -> libultragx-wii.dol       (HW_RVL, PAD + Wii remote)
-./run.sh                   # boot the GameCube .dol in Dolphin
+./run.sh                   # boot the .dol in Dolphin
 ```
 
-Per-platform object dirs (`build_gamecube/`, `build_wii/`) so both coexist. The
-GX/VI code is identical across targets; only Wii-remote input is `HW_RVL`-gated.
+Per-platform object dirs so both coexist. The GX/VI code is identical across
+targets; only Wii-remote input is `HW_RVL`-gated.
 
 ## On-SD layout and path resolution
 
@@ -97,52 +111,58 @@ next to a same-named folder holding its assets and writable data:
 sd:/<anywhere>/
   Ghostship.dol
   Ghostship/              <- base dir (the "app directory"); name = .dol stem
-    *.o2r                 read-only assets (ResourceManager loads these)
-    save.bin              save data (write)
-    config.cvar           CVar / settings persistence (write)
+    sm64.o2r              read-only assets (ResourceManager streams these)
+    config.ini            settings (aspect ratio, fps counter, frame interpolation)
+    saves/                save data (one JSON file per save slot)
 ```
 
 libultragx mounts the SD card (GameCube: libfat `__io_gcsd2` for SD2SP2, with
 SD Gecko slots A/B as fallback; Wii: the front SD slot) and derives the base dir
 from `argv[0]` (the `.dol` path Swiss passes via the argv protocol):
 `dirname(argv0) + "/" + stem(argv0) + "/"`. So naming the folder after the `.dol`
-and dropping the pair anywhere on the card works with zero config. The per-game
-glue may override the name; fallback when `argv[0]` is absent is
-`sd:/libultragx/<game>/`.
+and dropping the pair anywhere on the card works with zero config. When `argv[0]`
+is absent, the base dir defaults to the per-game folder (e.g. `sd:/Ghostship/`).
 
-This is exactly how libultragx implements libultraship's path API:
+This is how libultragx implements libultraship's path API:
 `Context::GetAppDirectoryPath`, `GetPathRelativeToAppDirectory`, and
-`LocateFileAcrossAppDirs` all resolve under this base dir. Resolution lands in M1
-(Context); `.o2r` reads in M3 (ResourceManager); saves in M4.
+`LocateFileAcrossAppDirs` all resolve under this base dir. The archive is streamed
+from SD on demand rather than read fully into RAM, which is what keeps the ~10 MB of
+game assets off the GameCube's 24 MB budget.
 
-## Milestones to "Mario renders"
+## Current state
 
-- **M0 - done.** GX bring-up: spinning triangle, pipeline proven on GameCube.
-- **M1 - linkable skeleton.** `Context` + `Window` + stubbed GUI + libultra stubs
-  + CVar bridge. Goal: Ghostship compiles and links against libultragx and
-  reaches its main loop (black screen). Link errors reveal the true API surface.
-- **M2 - geometry.** `gfx_gx` behind Fast3D `gfx_pc`; the game's display lists
-  render as untextured geometry.
-- **M3 - assets + combiners.** `ResourceManager` loads `.otr`/`.o2r` from SD +
-  the TEV combiner mapping. A **recognizable, textured Mario** appears here.
-- **M4 - playable.** ControlDeck (PAD/WPAD), audio (ASND), save.
+Super Mario 64, through the Ghostship fork, is playable on the Wii build: it boots,
+renders the whole game (3D world, actors, HUD, menus, dialogs, the interactive
+title-screen head), plays music and sound effects through the DSP, and reads and
+writes saves. It runs at its native 30 fps, with optional 60 fps frame
+interpolation.
 
-## Risks / open questions
+The GameCube build compiles and links; native GameCube runtime bring-up (SD access
+on a console with no built-in SD slot) is the main remaining platform item.
 
-1. **`.otr`/`.o2r` is a zip archive.** Need a lean zip reader over libfat/SD.
-   Target GC has SD2SP2 + PicoBoot + Swiss confirmed, so SD access is via libfat
-   `__io_gcsd2` (no blocker); saves live in the per-game SD folder by default,
-   with GC memory card as an optional backend later.
+Ongoing work: performance headroom for the heaviest scenes and for the heavier
+ports (reducing the DL-walk interpreter cost, and a possible hardware-T&L rewrite
+around native quantized vertex arrays), antialiasing, and additional ports.
+
+## Notes / constraints
+
+1. **`.o2r` is a zip archive.** A lean streaming zip reader sits over libfat/SD;
+   entries are read on demand so the archive is not held resident. Saves live in the
+   per-game SD folder; a GameCube memory-card backend is a possible later option.
 2. **C++ footprint on GameCube's 24 MB.** libultragx stays C++ (devkitPPC handles
-   it; the Wii U port is C++) but lean; watch the budget at M3. Wii validated first
-   when RAM is tight.
-3. **API version pinning.** We match Ghostship's pinned libultraship commit
+   it) but lean; the main RAM lever was streaming the archive instead of holding it
+   in memory. The Wii is validated first when RAM is tight.
+3. **API version pinning.** libultragx matches Ghostship's pinned libultraship commit
    (`11ad2a55164cff42396a28ece2da478d8afc5e1a`). Other games may pin different
    commits; reconcile per game.
 
 ## References
 
-- `Kenix3/libultraship` (the API we replace; pinned `11ad2a55`)
-- `HarbourMasters/libultraship-wiiu`, `GaryOderNichts/Shipwright` -
-  `gfx_gx2.cpp` + `gx2_shader_gen.c`, the combiner->hardware reference
+- `Kenix3/libultraship` (the API replaced; Ghostship pins `11ad2a55`)
+- `sm64-port` Wii branch by [mkst](https://github.com/mkst/sm64-port) - the
+  software-transform-to-GX reference (clip-space vertices + a pass-through
+  perspective so GX performs only the divide)
+- `prism-processor` (KiritoDv) - the combiner/shader translator, vendored
 - `gfx_pc.c` Fast3D interpreter (reused, MIT)
+- The Nintendo *Revolution Graphics Library (GX)* manual - the authoritative
+  reference for the GX pipeline, matrix conventions, and texture formats
