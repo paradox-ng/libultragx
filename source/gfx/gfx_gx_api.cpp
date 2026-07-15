@@ -302,7 +302,19 @@ void GfxRenderingAPIGX::SetViewport(int x, int y, int width, int height) {
 }
 
 void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
-    GX_SetScissor((u32)x, (u32)y, (u32)width, (u32)height);
+    // The interpreter's scissor comes through the SoH viewport/scissor path
+    // (AdjustVIewportOrScissor: Y-flip + RATIO scaling + a desktop window-viewport
+    // offset), which is written for a windowed desktop and mis-scales on console -
+    // it lands the rect in the wrong place. That clipped dialog text to a stray band,
+    // skewed the rotating dialog box into a parallelogram, and nicked the gameplay
+    // screen edges (the "broken line"). SM64 only uses scissoring to clip dialog text
+    // during page scrolls, so until the console coordinate mapping is worked out, use
+    // the full EFB (no clip), which is what real hardware renders correctly with.
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    GX_SetScissor(0, 0, 640, 528);
 }
 
 void GfxRenderingAPIGX::SetUseAlpha(bool useAlpha) {
