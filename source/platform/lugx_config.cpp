@@ -11,6 +11,7 @@
 LugxConfig g_lugx_config = {
     /* aspect      */ LUGX_ASPECT_AUTO,
     /* fps_counter */ true,
+    /* profiler    */ false,
 };
 
 static const char* kTemplate =
@@ -24,7 +25,12 @@ static const char* kTemplate =
     "\n"
     "# On-screen framerate counter (top-right). Handy while testing on hardware.\n"
     "#   true | false\n"
-    "fps_counter = true\n";
+    "fps_counter = true\n"
+    "\n"
+    "# On-screen CPU profiler rows under the fps counter (development diagnostic:\n"
+    "# whole-frame / draw / vertex-load / per-triangle / combiner microseconds).\n"
+    "#   true | false\n"
+    "profiler = false\n";
 
 // Trim leading/trailing ASCII whitespace in place, returning the start.
 static char* trim(char* s) {
@@ -59,6 +65,8 @@ static void apply_kv(const char* key, const char* val) {
         }
     } else if (!strcasecmp(key, "fps_counter")) {
         g_lugx_config.fps_counter = parse_bool(val, g_lugx_config.fps_counter);
+    } else if (!strcasecmp(key, "profiler")) {
+        g_lugx_config.profiler = parse_bool(val, g_lugx_config.profiler);
     }
 }
 

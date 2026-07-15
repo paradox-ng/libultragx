@@ -138,6 +138,37 @@ void GfxSetInstance(std::shared_ptr<Interpreter> gfx) {
 // N64 prim_depth is 15-bit (0 near, 0x7FFF far).
 static constexpr float N64_PRIM_DEPTH_MAX = 32767.0f;
 
+// TEMP profiler (see gfx_gx_api.cpp): time interpreter hot handlers. Reads the PPC time
+// base directly since <ogc/lwp_watchdog.h> collides with the interpreter's Mtx typedef.
+extern "C" volatile int g_lugx_prof_enabled;                   // gates the timers (from config)
+extern "C" volatile unsigned long long g_lugx_prof_vtx_ticks;  // GfxSpVertex
+extern "C" volatile unsigned long long g_lugx_prof_tri_ticks;  // GfxSpTri1 (incl. its Flush->draw)
+extern "C" volatile unsigned long long g_lugx_prof_comb_ticks; // LookupOrCreateColorCombiner
+namespace {
+static inline unsigned long long lugx_tb2(void) {
+    // Read the PPC time base (mftb). "memory" clobber = a compiler scheduling barrier so
+    // the two reads bracketing the timed region are not reordered adjacent (which would
+    // measure ~0 for inline code). Unguarded (this TU is only built for the PPC console).
+    unsigned int hi, lo, hi2;
+    do {
+        __asm__ __volatile__("mftbu %0" : "=r"(hi) : : "memory");
+        __asm__ __volatile__("mftb  %0" : "=r"(lo) : : "memory");
+        __asm__ __volatile__("mftbu %0" : "=r"(hi2) : : "memory");
+    } while (hi != hi2);
+    return ((unsigned long long)hi << 32) | lo;
+}
+struct LugxAccumScope {
+    unsigned long long s;
+    volatile unsigned long long* accum;
+    explicit LugxAccumScope(volatile unsigned long long* a) : accum(g_lugx_prof_enabled ? a : nullptr) {
+        if (accum) s = lugx_tb2();
+    }
+    ~LugxAccumScope() {
+        if (accum) *accum += lugx_tb2() - s;
+    }
+};
+} // namespace
+
 void Interpreter::Flush() {
     if (mBufVboLen > 0) {
         mRapi->SetCurrentPrimDepth((float)mRdp->prim_depth / N64_PRIM_DEPTH_MAX);
@@ -611,6 +642,7 @@ void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
 }
 
 ColorCombiner* Interpreter::LookupOrCreateColorCombiner(const ColorCombinerKey& key) {
+    LugxAccumScope _cp(&g_lugx_prof_comb_ticks); // profiler: combiner key lookup/create
     if (mPrevCombiner != mColorCombinerPool.end() && mPrevCombiner->first == key) {
         return &mPrevCombiner->second;
     }
@@ -2102,6 +2134,7 @@ void Interpreter::AdjustWidthHeightForScale(uint32_t& width, uint32_t& height, u
 }
 
 void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx* vertices) {
+    LugxAccumScope _vp(&g_lugx_prof_vtx_ticks); // profiler: time the vertex load/expand
     // The position transform runs in the vertex shader: capture the current
     // model-view-projection (with the widescreen aspect scale folded in) in the
     // matrix history once per matrix/aspect change and tag each vertex with it.
@@ -2200,6 +2233,7 @@ static bool CombineModeUsesShade(uint64_t combine_mode, bool is2Cyc) {
 }
 
 void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
+    LugxAccumScope _tp(&g_lugx_prof_tri_ticks); // profiler: per-triangle handler (incl. Flush->draw)
     struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];
     struct LoadedVertex* v2 = &mRsp->loaded_vertices[vtx2_idx];
     struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];

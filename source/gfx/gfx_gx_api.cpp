@@ -46,6 +46,33 @@ static void lugx_gx_invalidate_mtx_cache() {
     sNrmIdentityLoaded = false;
 }
 
+// --- temporary per-frame CPU profiler (interpreter-overhead pass) --------------------
+// g_lugx_prof_total_ticks = wall time of the whole-frame render (Interpreter::Run, set
+// by Fast3dWindow); g_lugx_prof_draw_ticks = summed time inside DrawTriangles. The
+// difference (total - draw) is the DL walk / command-dispatch overhead. Averages are
+// shown under the fps counter in microseconds/frame. Remove once the split is measured.
+extern "C" {
+volatile int g_lugx_prof_enabled = 0;         // set from config each frame; gates all timers
+volatile uint64_t g_lugx_prof_total_ticks = 0;
+volatile uint64_t g_lugx_prof_draw_ticks = 0;
+volatile uint64_t g_lugx_prof_vtx_ticks = 0;  // GfxSpVertex (vertex load/expand)
+volatile uint64_t g_lugx_prof_tri_ticks = 0;  // GfxSpTri1 whole (includes its Flush->draw)
+volatile uint64_t g_lugx_prof_comb_ticks = 0; // LookupOrCreateColorCombiner
+volatile uint32_t g_lugx_prof_frames = 0;
+}
+namespace {
+struct LugxProfScope {
+    uint64_t start;
+    volatile uint64_t* accum;
+    explicit LugxProfScope(volatile uint64_t* a) : accum(g_lugx_prof_enabled ? a : nullptr) {
+        if (accum) start = gettime();
+    }
+    ~LugxProfScope() {
+        if (accum) *accum += gettime() - start;
+    }
+};
+} // namespace
+
 // What a "shader" is for the GX backend: the N64 combiner decoded from the 64-bit
 // shader ids (which encode the RDP combine state), kept as the full CCFeatures so
 // DrawTriangles knows the vertex layout and how to drive the TEV stages.
@@ -398,6 +425,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     if (g_gx_skip_draw || mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
         return;
     }
+    LugxProfScope _ps(&g_lugx_prof_draw_ticks); // profiler: time the draw path
     g_dt_total++;
     g_dt_lastverts = (unsigned)(buf_vbo_num_tris * 3);
     static int dtc = 0;
@@ -959,7 +987,21 @@ static void lugx_fps_digit(int d, float x, float y, float dw, float dh, float t)
     if (m & 0x40) lugx_fps_rect(x + t, y + half - t * 0.5f, dw - 2 * t, t, R, G, B); // g
 }
 
-static void lugx_draw_fps_overlay(int fps, float fw, float fh) {
+// Render `digits` decimal digits of `val`, right-aligned so the rightmost digit's right
+// edge sits at xr, on row y. Used for the profiler microsecond readouts.
+static void lugx_fps_number(int val, int digits, float xr, float y, float dw, float dh, float t, float gap) {
+    if (val < 0) {
+        val = 0;
+    }
+    for (int i = 0; i < digits; i++) {
+        int d = val % 10;
+        val /= 10;
+        lugx_fps_digit(d, xr - dw - (float)i * (dw + gap), y, dw, dh, t);
+    }
+}
+
+static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, int triUs, int combUs, float fw,
+                                  float fh) {
     if (fps < 0) {
         fps = 0;
     }
@@ -1007,24 +1049,44 @@ static void lugx_draw_fps_overlay(int fps, float fw, float fh) {
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 
-    // Two digits over a dark box, top-right (pixel coords in a 640x480-style space).
-    const float dw = 15.0f, dh = 24.0f, t = 4.0f, gap = 6.0f, y = 12.0f;
-    const float x = fw - 14.0f - (dw * 2.0f + gap);
-    lugx_fps_rect(x - 5, y - 5, dw * 2 + gap + 10, dh + 10, 0, 0, 0); // dark backing box
-    lugx_fps_digit(fps / 10, x, y, dw, dh, t);
-    lugx_fps_digit(fps % 10, x + dw + gap, y, dw, dh, t);
+    // Top-right readout over a dark box (pixel coords in a 640x480-style space):
+    //   row 0 = fps (2 digits); row 1 = whole-frame render us; row 2 = draw-path us.
+    // total - draw = the DL walk / dispatch overhead. All right-aligned at xr.
+    // Rows: 0 fps | 1 whole-frame us | 2 draw-path us | 3 GfxSpVertex us.
+    // walk (DL dispatch) = total - draw; the vtx row is a sub-cost inside the walk.
+    const bool showFps = g_lugx_config.fps_counter;
+    const bool showProf = g_lugx_config.profiler;
+    const float dw = 15.0f, dh = 24.0f, t = 4.0f, gap = 6.0f;
+    const float xr = fw - 14.0f;
+    const float y0 = 12.0f, y1 = 44.0f, y2 = 76.0f, y3 = 108.0f, y4 = 140.0f, y5 = 172.0f;
+    const float boxL = xr - (dw * 5.0f + gap * 4.0f) - 5.0f;
+    const float yTop = showFps ? y0 : y1;   // first visible row
+    const float yBot = showProf ? y5 : y0;  // last visible row
+    lugx_fps_rect(boxL, yTop - 5, xr - boxL + 5, (yBot + dh + 5) - (yTop - 5), 0, 0, 0); // dark box
+    if (showFps) {
+        lugx_fps_number(fps, 2, xr, y0, dw, dh, t, gap);
+    }
+    if (showProf) {
+        lugx_fps_number(totalUs, 5, xr, y1, dw, dh, t, gap); // whole-frame render
+        lugx_fps_number(drawUs, 5, xr, y2, dw, dh, t, gap);  // DrawTriangles (transform+emit+state)
+        lugx_fps_number(vtxUs, 5, xr, y3, dw, dh, t, gap);   // GfxSpVertex
+        lugx_fps_number(triUs, 5, xr, y4, dw, dh, t, gap);   // GfxSpTri1 whole (includes its draw)
+        lugx_fps_number(combUs, 5, xr, y5, dw, dh, t, gap);  // combiner lookup
+    }
 }
 
 // Measure the present rate and draw the fps overlay. Called from the window
 // backend right before the EFB->XFB copy, so it lands on the final image (after
 // any render-to-framebuffer resolve the game did).
 void lugx_fps_overlay(float fbWidth, float fbHeight) {
-    if (!g_lugx_config.fps_counter) {
+    g_lugx_prof_enabled = g_lugx_config.profiler ? 1 : 0; // gate the hot-path timers
+    if (!g_lugx_config.fps_counter && !g_lugx_config.profiler) {
         return;
     }
     static uint64_t lastTick = 0;
     static int frames = 0;
     static int fpsValue = 0;
+    static int totalUs = 0, drawUs = 0, vtxUs = 0, triUs = 0, combUs = 0;
     const uint64_t now = gettime();
     if (lastTick == 0) {
         lastTick = now;
@@ -1034,10 +1096,25 @@ void lugx_fps_overlay(float fbWidth, float fbHeight) {
     if (elapsed >= 500000) {
         // Round to nearest (e.g. 29.97 -> 30) rather than truncating (-> 29).
         fpsValue = (int)(((uint64_t)frames * 1000000ull + elapsed / 2) / elapsed);
+        // Average the profiler accumulators over the frames since the last refresh.
+        uint32_t pf = g_lugx_prof_frames;
+        if (pf > 0) {
+            totalUs = (int)(ticks_to_microsecs(g_lugx_prof_total_ticks) / pf);
+            drawUs = (int)(ticks_to_microsecs(g_lugx_prof_draw_ticks) / pf);
+            vtxUs = (int)(ticks_to_microsecs(g_lugx_prof_vtx_ticks) / pf);
+            triUs = (int)(ticks_to_microsecs(g_lugx_prof_tri_ticks) / pf);
+            combUs = (int)(ticks_to_microsecs(g_lugx_prof_comb_ticks) / pf);
+        }
+        g_lugx_prof_total_ticks = 0;
+        g_lugx_prof_draw_ticks = 0;
+        g_lugx_prof_vtx_ticks = 0;
+        g_lugx_prof_tri_ticks = 0;
+        g_lugx_prof_comb_ticks = 0;
+        g_lugx_prof_frames = 0;
         frames = 0;
         lastTick = now;
     }
-    lugx_draw_fps_overlay(fpsValue, fbWidth, fbHeight);
+    lugx_draw_fps_overlay(fpsValue, totalUs, drawUs, vtxUs, triUs, combUs, fbWidth, fbHeight);
 }
 
 void GfxRenderingAPIGX::StartFrame() {}

@@ -11,6 +11,24 @@
 extern "C" void bootlog(const char*);
 extern "C" void bootflush(void);
 
+// TEMP profiler: whole-frame render time (see gfx_gx_api.cpp). total - draw = DL walk.
+// Read the PPC time base directly (what libogc's gettime does): <ogc/lwp_watchdog.h>
+// can't be included here because its transitive <ogc/gu.h> redefines Mtx and collides
+// with the interpreter's Mtx, and gettime is header-inline so it has no link symbol.
+// Same TB units as gettime, so ticks_to_microsecs in gfx_gx_api.cpp converts correctly.
+static inline unsigned long long lugx_tb(void) {
+    unsigned int hi, lo, hi2;
+    do {
+        __asm__ __volatile__("mftbu %0" : "=r"(hi));
+        __asm__ __volatile__("mftb  %0" : "=r"(lo));
+        __asm__ __volatile__("mftbu %0" : "=r"(hi2));
+    } while (hi != hi2);
+    return ((unsigned long long)hi << 32) | lo;
+}
+extern "C" volatile int g_lugx_prof_enabled;
+extern "C" volatile unsigned long long g_lugx_prof_total_ticks;
+extern "C" volatile unsigned int g_lugx_prof_frames;
+
 namespace Fast {
 
 // Defined in the GX translation units (gfx_gx_api.cpp / gfx_gx_window.cpp); declared
@@ -79,7 +97,14 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     bool dt = false; // BISECT: fine trace off
     mInterpreter->StartFrame();
     if (dt) { bootlog("  dr pre-Run"); bootflush(); }
-    mInterpreter->Run(commands, mtxReplacements, dlReplacements);
+    if (g_lugx_prof_enabled) {
+        unsigned long long profStart = lugx_tb();
+        mInterpreter->Run(commands, mtxReplacements, dlReplacements);
+        g_lugx_prof_total_ticks += lugx_tb() - profStart;
+        g_lugx_prof_frames++;
+    } else {
+        mInterpreter->Run(commands, mtxReplacements, dlReplacements);
+    }
     if (dt) { bootlog("  dr pre-EndFrame"); bootflush(); }
     mInterpreter->EndFrame();
     if (dt) { bootlog("  dr post-EndFrame"); bootflush(); }
