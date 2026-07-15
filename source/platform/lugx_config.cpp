@@ -11,8 +11,8 @@
 LugxConfig g_lugx_config = {
     /* aspect      */ LUGX_ASPECT_AUTO,
     /* fps_counter */ true,
-    /* profiler    */ false,
-    /* fps_60      */ false,
+    /* debug_profiler */ false,
+    /* frame_interpolation */ false,
 };
 
 static const char* kTemplate =
@@ -31,12 +31,12 @@ static const char* kTemplate =
     "# On-screen CPU profiler rows under the fps counter (development diagnostic:\n"
     "# whole-frame / draw / vertex-load / per-triangle / combiner microseconds).\n"
     "#   true | false\n"
-    "profiler = false\n"
+    "debug_profiler = false\n"
     "\n"
-    "# Interpolate to 60fps. Game logic still runs at its native 30fps; in-between\n"
-    "# frames are interpolated for smoother motion (costs more CPU/GPU per second).\n"
+    "# Frame interpolation: render in-between frames for 60fps motion. Game logic still\n"
+    "# runs at its native 30fps (costs more CPU/GPU per second).\n"
     "#   true | false\n"
-    "fps_60 = false\n";
+    "frame_interpolation = false\n";
 
 // Trim leading/trailing ASCII whitespace in place, returning the start.
 static char* trim(char* s) {
@@ -71,10 +71,10 @@ static void apply_kv(const char* key, const char* val) {
         }
     } else if (!strcasecmp(key, "fps_counter")) {
         g_lugx_config.fps_counter = parse_bool(val, g_lugx_config.fps_counter);
-    } else if (!strcasecmp(key, "profiler")) {
-        g_lugx_config.profiler = parse_bool(val, g_lugx_config.profiler);
-    } else if (!strcasecmp(key, "fps_60")) {
-        g_lugx_config.fps_60 = parse_bool(val, g_lugx_config.fps_60);
+    } else if (!strcasecmp(key, "debug_profiler")) {
+        g_lugx_config.debug_profiler = parse_bool(val, g_lugx_config.debug_profiler);
+    } else if (!strcasecmp(key, "frame_interpolation")) {
+        g_lugx_config.frame_interpolation = parse_bool(val, g_lugx_config.frame_interpolation);
     }
 }
 

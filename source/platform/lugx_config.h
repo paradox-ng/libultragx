@@ -15,8 +15,8 @@ typedef enum {
 typedef struct {
     int aspect;       // LugxAspect (default auto)
     bool fps_counter; // draw an on-screen framerate counter (default on)
-    bool profiler;    // draw the on-screen CPU profiler rows (dev; default off)
-    bool fps_60;      // interpolate to 60fps (logic stays 30; default off)
+    bool debug_profiler; // draw the on-screen CPU profiler rows (dev; default off)
+    bool frame_interpolation; // interpolate 30fps logic to 60fps motion (default off)
 } LugxConfig;
 
 #ifdef __cplusplus

@@ -1055,7 +1055,7 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
     // Rows: 0 fps | 1 whole-frame us | 2 draw-path us | 3 GfxSpVertex us.
     // walk (DL dispatch) = total - draw; the vtx row is a sub-cost inside the walk.
     const bool showFps = g_lugx_config.fps_counter;
-    const bool showProf = g_lugx_config.profiler;
+    const bool showProf = g_lugx_config.debug_profiler;
     const float dw = 15.0f, dh = 24.0f, t = 4.0f, gap = 6.0f;
     const float xr = fw - 14.0f;
     const float y0 = 12.0f, y1 = 44.0f, y2 = 76.0f, y3 = 108.0f, y4 = 140.0f, y5 = 172.0f;
@@ -1079,8 +1079,8 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
 // backend right before the EFB->XFB copy, so it lands on the final image (after
 // any render-to-framebuffer resolve the game did).
 void lugx_fps_overlay(float fbWidth, float fbHeight) {
-    g_lugx_prof_enabled = g_lugx_config.profiler ? 1 : 0; // gate the hot-path timers
-    if (!g_lugx_config.fps_counter && !g_lugx_config.profiler) {
+    g_lugx_prof_enabled = g_lugx_config.debug_profiler ? 1 : 0; // gate the hot-path timers
+    if (!g_lugx_config.fps_counter && !g_lugx_config.debug_profiler) {
         return;
     }
     static uint64_t lastTick = 0;
