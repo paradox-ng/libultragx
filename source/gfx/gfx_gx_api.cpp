@@ -664,11 +664,14 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
                 s = 0;
             }
             const float(*M)[4] = mTransform.mtx_palette[s];
-            const float ox = v[0], oy = v[1], oz = v[2], ow = v[3];
-            o.x = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + ow * M[3][0];
-            o.y = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + ow * M[3][1];
-            o.z = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + ow * M[3][2];
-            o.w = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + ow * M[3][3];
+            // Object-space w is always 1 (GfxSpVertex sets loaded_vertices w = 1 for
+            // every vertex, and rects likewise), so the M[3][*] column adds directly -
+            // four fewer multiplies per vertex than the general ow * M[3][*].
+            const float ox = v[0], oy = v[1], oz = v[2];
+            o.x = ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + M[3][0];
+            o.y = ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + M[3][1];
+            o.z = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + M[3][2];
+            o.w = ox * M[0][3] + oy * M[1][3] + oz * M[2][3] + M[3][3];
             int k = 0;
             if (submitNormal) {
                 o.a[k++] = v[shadeOff + 0];
