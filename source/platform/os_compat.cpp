@@ -182,4 +182,42 @@ void osViBlack(uint8_t /*active*/) {
 void osViSetSpecialFeatures(u32 /*func*/) {
 }
 
+// These N64 OS primitives are provided as WEAK defaults: a port that excludes its own
+// src/libultra (e.g. Starship) links these, while a port that keeps its N64 libultra io
+// files (e.g. Ghostship's lib/src/osAiSetFrequency.c) overrides them with its strong
+// definition - no multiple-definition clash either way.
+
+// GX owns the video interface (framebuffer flips and the retrace event are driven by
+// the Fast3D window), so the N64 VI calls the game still makes are inert.
+__attribute__((weak)) void osViSwapBuffer(void* /*framebuffer*/) {
+}
+
+__attribute__((weak)) void osViSetEvent(OSMesgQueue* /*mq*/, OSMesg /*msg*/, u32 /*retraceCount*/) {
+}
+
+// CPU count register: the PPC time base lower word. Games use it for timing and RNG
+// seeding, so return the live value rather than a constant.
+__attribute__((weak)) uint32_t osGetCount(void) {
+    uint32_t count;
+    __asm__ volatile("mftb %0" : "=r"(count));
+    return count;
+}
+
+// No EEPROM on console; saves go through the port's save backend. Report failure so
+// callers fall back rather than trusting uninitialised data.
+__attribute__((weak)) s32 osEepromRead(OSMesgQueue* /*mq*/, u8 /*address*/, u8* /*buffer*/) {
+    return -1;
+}
+
+__attribute__((weak)) s32 osEepromWrite(OSMesgQueue* /*mq*/, u8 /*address*/, u8* /*buffer*/) {
+    return -1;
+}
+
+// Audio interface frequency: the console mixer (ASND) runs at its own fixed rate, so
+// this is inert. Return the requested frequency as the "actual" rate, matching the N64
+// contract closely enough for callers that read it back.
+__attribute__((weak)) s32 osAiSetFrequency(u32 freq) {
+    return (s32) freq;
+}
+
 } // extern "C"

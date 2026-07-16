@@ -409,6 +409,16 @@ extern "C" int g_gx_stop_at;   // BISECT: stop after stage N (1=TEV 2=vtxdesc 3=
 extern "C" void bootlog(const char*);
 extern "C" void bootflush(void);
 
+// Identity fill for the constant GX position/normal matrices loaded below. Done inline
+// rather than via libogc's guMtxIdentity so the game build never links libogc's gu.o -
+// whose guLookAt/guOrtho/guPerspective would collide with the N64 gu functions a game
+// defines in its own engine (e.g. Starship's src/engine/lookat.c, guPerspectiveF.c).
+static inline void lugx_mtx_identity(Mtx m) {
+    m[0][0] = 1.0f; m[0][1] = 0.0f; m[0][2] = 0.0f; m[0][3] = 0.0f;
+    m[1][0] = 0.0f; m[1][1] = 1.0f; m[1][2] = 0.0f; m[1][3] = 0.0f;
+    m[2][0] = 0.0f; m[2][1] = 0.0f; m[2][2] = 1.0f; m[2][3] = 0.0f;
+}
+
 volatile unsigned g_dt_total = 0;     // total triangle batches submitted (gdb-readable)
 volatile unsigned g_dt_lastverts = 0; // verts of the most recent batch
 
@@ -545,7 +555,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // draw; only (re)load them when they are not already resident (see the cache).
         if (!sPassThroughLoaded) {
             Mtx ident;
-            guMtxIdentity(ident);
+            lugx_mtx_identity(ident);
             GX_LoadPosMtxImm(ident, GX_PNMTX0);
             GX_LoadProjectionMtx(sPassPersp, GX_PERSPECTIVE);
             sPassThroughLoaded = true;
@@ -593,7 +603,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // Constant, so load it only when not already resident (see the cache).
         if (!sNrmIdentityLoaded) {
             Mtx nrmMtx;
-            guMtxIdentity(nrmMtx);
+            lugx_mtx_identity(nrmMtx);
             GX_LoadNrmMtxImm(nrmMtx, GX_PNMTX0);
             sNrmIdentityLoaded = true;
         }
@@ -1027,7 +1037,7 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
     proj[3][3] = 1.0f;
     GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
     Mtx mv;
-    guMtxIdentity(mv);
+    lugx_mtx_identity(mv);
     GX_LoadPosMtxImm(mv, GX_PNMTX0);
     GX_SetCurrentMtx(GX_PNMTX0);
     lugx_gx_invalidate_mtx_cache(); // overlay loaded its own pos-mtx + projection
@@ -1186,7 +1196,7 @@ void GfxRenderingAPIGX::ClearFramebuffer(bool color, bool depth) {
     }
     GX_LoadProjectionMtx(sClearOrtho, GX_ORTHOGRAPHIC);
     Mtx ident;
-    guMtxIdentity(ident);
+    lugx_mtx_identity(ident);
     GX_LoadPosMtxImm(ident, GX_PNMTX0);
     lugx_gx_invalidate_mtx_cache(); // clear loaded its own pos-mtx + projection
 

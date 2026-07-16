@@ -60,6 +60,9 @@ class Fast3dWindow : public Ship::Window {
     void SetTargetFps(int32_t fps);
     void SetMaximumFrameLatency(int32_t latency);
     void SetRendererUCode(UcodeHandlers ucode);
+    // sRGB / gamma-boost output. Not yet wired to GX gamma (GX_SetDispCopyGamma); a
+    // no-op keeps ports that toggle it (e.g. Starship's gEnableGammaBoost) compiling.
+    void EnableSRGBMode() {}
     bool DrawAndRunGraphicsCommands(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements,
                                     const std::unordered_map<Gfx*, Gfx*>& dlReplacements = {});
 

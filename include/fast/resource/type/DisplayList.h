@@ -2,6 +2,7 @@
 
 #include <vector>
 #include "ship/resource/Resource.h"
+#include "fast/resource/ResourceType.h"
 #include "fast/ucodehandlers.h"
 #include <libultraship/libultra/gbi.h>
 

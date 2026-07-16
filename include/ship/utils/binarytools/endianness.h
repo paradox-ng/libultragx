@@ -44,3 +44,32 @@ enum class Endianness {
 #define LE32SWAP(x) (x)
 #define LE64SWAP(x) (x)
 #endif
+
+// Constant-expression swaps. The __builtin_bswap* forms above are not usable in every
+// static-initializer context (some games byte-swap constants at file scope), so these
+// use pure arithmetic and are valid constant expressions. Named by stored byte order
+// like the runtime helpers: on a big-endian target BE*_CONST is a no-op.
+#define BSWAP16_CONST(x) ((((x) >> 8) & 0x00FF) | (((x) << 8) & 0xFF00))
+#define BSWAP32_CONST(x)                                                                                                \
+    ((((x) >> 24) & 0x000000FF) | (((x) >> 8) & 0x0000FF00) | (((x) << 8) & 0x00FF0000) | (((x) << 24) & 0xFF000000))
+#define BSWAP64_CONST(x)                                                                                                \
+    ((((x) >> 56) & 0x00000000000000FFULL) | (((x) >> 40) & 0x000000000000FF00ULL) |                                   \
+     (((x) >> 24) & 0x0000000000FF0000ULL) | (((x) >> 8) & 0x00000000FF000000ULL) |                                    \
+     (((x) << 8) & 0x000000FF00000000ULL) | (((x) << 24) & 0x0000FF0000000000ULL) |                                    \
+     (((x) << 40) & 0x00FF000000000000ULL) | (((x) << 56) & 0xFF00000000000000ULL))
+
+#ifdef IS_BIGENDIAN
+#define BE16SWAP_CONST(x) (x)
+#define BE32SWAP_CONST(x) (x)
+#define BE64SWAP_CONST(x) (x)
+#define LE16SWAP_CONST(x) BSWAP16_CONST(x)
+#define LE32SWAP_CONST(x) BSWAP32_CONST(x)
+#define LE64SWAP_CONST(x) BSWAP64_CONST(x)
+#else
+#define BE16SWAP_CONST(x) BSWAP16_CONST(x)
+#define BE32SWAP_CONST(x) BSWAP32_CONST(x)
+#define BE64SWAP_CONST(x) BSWAP64_CONST(x)
+#define LE16SWAP_CONST(x) (x)
+#define LE32SWAP_CONST(x) (x)
+#define LE64SWAP_CONST(x) (x)
+#endif

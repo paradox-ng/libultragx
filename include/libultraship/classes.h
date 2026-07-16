@@ -7,13 +7,16 @@
 // exactly as upstream - keeping the gbi-only interpreter out of this header so GX
 // translation units can still include <libultraship.h>.)
 
-// The event-type macros (DEFINE_EVENT/CALL_EVENT) and payload structs are C-safe and
-// used by the game's C and C++ TUs alike, so they sit outside the C++ guard.
-#include "ship/events/EventTypes.h"
-
 // These are C++ classes; the game's C translation units also pull <libultraship.h>
 // (via libultra_internal.h), so guard them - C files get only the N64 ABI + the C
-// bridges (and the event macros above) from the umbrella, never the class headers.
+// bridges from the umbrella, never the class headers. This matches upstream
+// libultraship, whose classes.h is likewise entirely C++-only. The event system
+// (EventTypes/EventSystem/CoreEvents) is a C++ subsystem here and is included inside
+// the guard below; a game that fires events from its own C translation units includes
+// <ship/events/EventTypes.h> directly where it uses DEFINE_EVENT/CALL_EVENT (as it
+// must against upstream too), rather than relying on this umbrella to leak the event
+// typedefs into every C TU - which would collide with a port that ships its own
+// event system.
 #ifdef __cplusplus
 // Common STL headers upstream libultraship.h pulled in transitively (via spdlog and
 // friends). Game TUs that include <libultraship.h> rely on these being present - e.g.
