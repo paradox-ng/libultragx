@@ -459,6 +459,33 @@ static u8 sFogType = GX_FOG_NONE;
 static float sFogStart = 0.0f, sFogEnd = 0.0f;
 static GXColor sFogColor = { 0, 0, 0, 0 };
 
+// The N64 also carries a fog factor in each vertex's alpha, which the fog unit cannot
+// express because it is per-vertex data rather than a function of distance. That case
+// gets a texture environment stage instead: the stage mixes whatever the combiner
+// produced toward the fog colour by the rasterised alpha, leaving alpha untouched. GX
+// allows sixteen such stages and the combiner uses one, so this is affordable.
+//
+// A stage may only reference a single constant colour, so the fog colour goes in one and
+// the factor comes from the vertex. The remaining case, a constant veil with no per-pixel
+// variation, would need a second constant and is left alone for now.
+static bool lugx_apply_vertex_alpha_fog(const CCFeatures& cc, const CombinerUniforms& u) {
+    if (!cc.opt_fog || u.fog_params[3] != 2.0f) {
+        return false;
+    }
+    GXColor fog = { float_to_u8(u.fog_color[0]), float_to_u8(u.fog_color[1]), float_to_u8(u.fog_color[2]), 255 };
+    GX_SetTevKColor(GX_KCOLOR0, fog);
+    GX_SetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0);
+    GX_SetTevOrder(GX_TEVSTAGE1, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+    // out = (1 - factor) * previous + factor * fog colour
+    GX_SetTevColorIn(GX_TEVSTAGE1, GX_CC_CPREV, GX_CC_KONST, GX_CC_RASA, GX_CC_ZERO);
+    GX_SetTevColorOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    // Fog changes colour only; carry the combiner's alpha through untouched.
+    GX_SetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
+    GX_SetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GX_SetNumTevStages(2);
+    return true;
+}
+
 static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u) {
     u8 type = GX_FOG_NONE;
     float startZ = 0.0f, endZ = 1.0f;
@@ -534,6 +561,9 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // this for the GL shader's discard, so GX must apply it here or the transparent
     // texels render opaque (a solid rectangle around text, broken cutouts).
     lugx_set_alpha_test(cc.opt_alpha_threshold || cc.opt_texture_edge, 128);
+    // Fog reaches us either as a distance ramp, which the fog unit handles, or carried in
+    // the vertex alpha, which needs its own stage after the combiner's.
+    lugx_apply_vertex_alpha_fog(cc, mCombinerUniforms);
     lugx_apply_fog(cc, mCombinerUniforms);
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
@@ -577,7 +607,27 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
         GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
         GX_SetNumTexGens(1);
-        GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+        // Reflective surfaces ask for their texture coordinates to be generated from the
+        // surface normal rather than read from the vertex, which is how the N64 makes
+        // metal and chrome sweep as an object turns. It derives each coordinate by
+        // projecting the normal onto one of two model-space vectors and then scaling and
+        // offsetting the result, which is precisely a 2x4 matrix applied to the normal,
+        // so GX generates it directly from the normal with no CPU work per vertex.
+        if (cc.opt_texgen) {
+            const LightingUniforms& lu = mLightingUniforms;
+            Mtx tg;
+            memset(tg, 0, sizeof(tg));
+            for (int i = 0; i < 3; i++) {
+                tg[0][i] = lu.lookat_x[i] * lu.texgen[0][0];
+                tg[1][i] = lu.lookat_y[i] * lu.texgen[0][2];
+            }
+            tg[0][3] = lu.texgen[0][1];
+            tg[1][3] = lu.texgen[0][3];
+            GX_LoadTexMtxImm(tg, GX_TEXMTX0, GX_MTX2x4);
+            GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_NRM, GX_TEXMTX0);
+        } else {
+            GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+        }
         // Bind the texture currently selected on tile 0 to GX_TEXMAP0.
         uint32_t tid = mTileTexture[0];
         if (tid < mTextures.size() && mTextures[tid].data != nullptr) {
