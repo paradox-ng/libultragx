@@ -394,7 +394,11 @@ void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
         ht = fbHeight - top;
     }
     if (wd <= 0 || ht <= 0) {
-        GX_SetScissor(0, 0, 1, 1);
+        // A rectangle that came out inside-out or empty is a quirk of the game's own
+        // arithmetic rather than a request to draw nothing (the dialogue bounds invert
+        // while the box is opening). Clipping to nothing there blanks whatever is being
+        // drawn, so fall back to the whole framebuffer.
+        GX_SetScissor(0, 0, (u32)fbWidth, (u32)fbHeight);
         return;
     }
     GX_SetScissor((u32)left, (u32)top, (u32)wd, (u32)ht);
@@ -716,9 +720,17 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             const LightingUniforms& lu = mLightingUniforms;
             Mtx tg;
             memset(tg, 0, sizeof(tg));
+            // Normals reach us as the game stores them, spanning roughly plus or minus a
+            // hundred and twenty seven rather than a unit length, so the projection onto
+            // each lookat vector is brought back to that range before the tile scale is
+            // applied. Leaving it out makes the generated coordinates far too large and
+            // the reflection unrecognisable. The N64 also clamps the projection to the
+            // unit range, which a matrix cannot express; the texture's wrap mode covers
+            // the overshoot in practice.
+            const float kNormalScale = 1.0f / 127.0f;
             for (int i = 0; i < 3; i++) {
-                tg[0][i] = lu.lookat_x[i] * lu.texgen[0][0];
-                tg[1][i] = lu.lookat_y[i] * lu.texgen[0][2];
+                tg[0][i] = lu.lookat_x[i] * kNormalScale * lu.texgen[0][0];
+                tg[1][i] = lu.lookat_y[i] * kNormalScale * lu.texgen[0][2];
             }
             tg[0][3] = lu.texgen[0][1];
             tg[1][3] = lu.texgen[0][3];
