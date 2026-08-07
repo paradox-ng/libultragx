@@ -2993,8 +2993,15 @@ void Interpreter::AdjustVIewportOrScissor(XYWidthHeight* area) {
         area->x *= RATIO_X(mActiveFrameBuffer, mCurDimensions);
         area->y *= RATIO_Y(mActiveFrameBuffer, mCurDimensions);
 
-        if (!mRendersToFb || (mMsaaLevel > 1 && mCurDimensions.width == mGameWindowViewport.width &&
-                              mCurDimensions.height == mGameWindowViewport.height)) {
+        // Shift from the game's own viewport into window coordinates. This only means
+        // anything where the game occupies part of a larger window; on a console it fills
+        // the framebuffer and no viewport is ever set, leaving the height of the whole
+        // display to be added as an offset, which pushed viewports and scissor rectangles
+        // clean off the screen. An unset viewport means no shift.
+        const bool haveGameWindowViewport = mGameWindowViewport.width > 0 && mGameWindowViewport.height > 0;
+        if (haveGameWindowViewport && (!mRendersToFb || (mMsaaLevel > 1 &&
+                                                         mCurDimensions.width == mGameWindowViewport.width &&
+                                                         mCurDimensions.height == mGameWindowViewport.height))) {
             area->x += mGameWindowViewport.x;
             area->y += mGfxCurrentWindowDimensions.height - (mGameWindowViewport.y + mGameWindowViewport.height);
         }

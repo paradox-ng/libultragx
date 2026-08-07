@@ -361,21 +361,43 @@ void GfxRenderingAPIGX::SetViewport(int x, int y, int width, int height) {
 }
 
 void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
-    // The interpreter's scissor comes through the SoH viewport/scissor path
-    // (AdjustVIewportOrScissor: Y-flip + RATIO scaling + a desktop window-viewport
-    // offset), which is written for a windowed desktop and mis-scales on console -
-    // it lands the rect in the wrong place. That clipped dialog text to a stray band,
-    // skewed the rotating dialog box into a parallelogram, and nicked the gameplay
-    // screen edges (the "broken line"). SM64 only uses scissoring to clip dialog text
-    // during page scrolls, so until the console coordinate mapping is worked out, use
-    // the full EFB (no clip), which is what real hardware renders correctly with.
-    (void)x;
-    (void)y;
-    (void)width;
-    (void)height;
-    // Take the size from the window rather than assuming one: it differs per TV
-    // standard (480 lines on NTSC, 528 on PAL) and halves again under antialiasing.
-    GX_SetScissor(0, 0, g_lugx_efb_width, g_lugx_efb_height);
+    // The rectangle arrives measured from the bottom of the framebuffer upward, and its y
+    // names the LOWER edge: the interpreter builds it from the game's lower bound and
+    // then flips the axis. GX measures from the top down, so its upper edge is the
+    // framebuffer height less the far side of the rectangle. Reading y as the upper edge
+    // instead collapses a full-screen rectangle to nothing and blanks the display. The
+    // size comes from the window rather than being assumed: it differs per TV standard
+    // and halves again under antialiasing.
+    const int fbWidth = (int)g_lugx_efb_width;
+    const int fbHeight = (int)g_lugx_efb_height;
+
+    int left = x;
+    int top = fbHeight - (y + height);
+    int wd = width;
+    int ht = height;
+
+    // Clip to the framebuffer. A rectangle reaching past an edge is normal (the game
+    // scissors in its own coordinates); one that misses entirely would be rejected by GX,
+    // so collapse it to something empty but valid instead.
+    if (left < 0) {
+        wd += left;
+        left = 0;
+    }
+    if (top < 0) {
+        ht += top;
+        top = 0;
+    }
+    if (left + wd > fbWidth) {
+        wd = fbWidth - left;
+    }
+    if (top + ht > fbHeight) {
+        ht = fbHeight - top;
+    }
+    if (wd <= 0 || ht <= 0) {
+        GX_SetScissor(0, 0, 1, 1);
+        return;
+    }
+    GX_SetScissor((u32)left, (u32)top, (u32)wd, (u32)ht);
 }
 
 void GfxRenderingAPIGX::SetUseAlpha(bool useAlpha) {
