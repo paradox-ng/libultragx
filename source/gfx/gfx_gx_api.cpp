@@ -1031,8 +1031,15 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         };
         auto emitCV = [&](const LugxClipVert& c) {
             // Pull decals a fixed distance toward the eye so they beat the surface they
-            // lie on, at any distance (see kDecalEyeBias).
-            float cw = sDecalOn ? c.w - kDecalEyeBias : c.w;
+            // lie on, at any distance (see kDecalEyeBias). Never let that nudge push a
+            // vertex through the near plane: clipping has already been done by this
+            // point, so a vertex sent behind the eye here is clamped to almost nothing
+            // and smears its triangle across the screen. Close to the eye the nudge is
+            // not needed anyway, since depth is at its most precise there.
+            float cw = c.w;
+            if (sDecalOn && (cw - kDecalEyeBias) > kPassNearZ) {
+                cw -= kDecalEyeBias;
+            }
             cw = cw < 0.001f ? 0.001f : cw;
             GX_Position3f32(c.x, c.y, -cw);
             int k = 0;
