@@ -808,33 +808,39 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             sPassThroughLoaded = true;
         }
     } else {
+        // A flat, affine transform. GX does not keep a projection as a whole matrix: an
+        // orthographic one is six numbers, the two scales, the two translations and the
+        // depth pair. Everything off the diagonal is discarded, and that is precisely
+        // where a rotation lives, so passing the game's matrix as the projection quietly
+        // drops any spin: the dialogue box grew and slid into place instead of turning.
+        //
+        // The position matrix is a full three-by-four and does carry rotation, so the
+        // game's transform belongs there, leaving the projection to do nothing but hand
+        // the result through and settle the depth convention.
         Mtx mv;
         for (int r = 0; r < 3; r++) {
             for (int c = 0; c < 4; c++) {
-                mv[r][c] = sGxViewMtx[r][c];
+                // The interpreter composes its transform the other way round from GX
+                // (a point multiplies the matrix rather than the matrix a point), so it
+                // arrives transposed.
+                mv[r][c] = mTransform.mtx_palette[slot0][c][r];
             }
         }
         GX_LoadPosMtxImm(mv, GX_PNMTX0);
-        Mtx44 proj;
-        // The interpreter captures MV*P per slot (N64 transform clip = obj_row * M),
-        // so GX needs the transpose.
-        for (int r = 0; r < 4; r++) {
-            for (int c = 0; c < 4; c++) {
-                proj[r][c] = mTransform.mtx_palette[slot0][c][r];
-            }
+
+        static Mtx44 sFlatProj;
+        static bool sFlatProjBuilt = false;
+        if (!sFlatProjBuilt) {
+            memset(sFlatProj, 0, sizeof(sFlatProj));
+            sFlatProj[0][0] = 1.0f;
+            sFlatProj[1][1] = 1.0f;
+            // Depth arrives spanning minus one to one and GX wants minus one to zero.
+            sFlatProj[2][2] = 0.5f;
+            sFlatProj[2][3] = -0.5f;
+            sFlatProj[3][3] = 1.0f;
+            sFlatProjBuilt = true;
         }
-        // Clip-z remap: GL-convention NDC z [-1,1] -> GX z [-1,0].
-        for (int c = 0; c < 4; c++) {
-            proj[2][c] = 0.5f * proj[2][c] - 0.5f * proj[3][c];
-        }
-        // This path is taken only when the slot matrix has no perspective term (W column
-        // [0,0,0,1]), i.e. an orthographic/affine 2D transform, so load it as ORTHOGRAPHIC.
-        // GX_PERSPECTIVE would read the z-coupling column (proj[i][2]) and force w = -z,
-        // discarding the translation column (proj[i][3]); 2D quads positioned purely by a
-        // translate matrix (menu glyphs, the title background tiles, the file-select cursor)
-        // would then collapse to the object origin and vanish. ORTHOGRAPHIC reads proj[i][3]
-        // (the translation) and uses w = 1.
-        GX_LoadProjectionMtx(proj, GX_ORTHOGRAPHIC);
+        GX_LoadProjectionMtx(sFlatProj, GX_ORTHOGRAPHIC);
         sPassThroughLoaded = false; // 2D loaded a different pos-mtx + projection
     }
     DZ("post-mtx");
