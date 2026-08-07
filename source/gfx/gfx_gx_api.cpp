@@ -536,46 +536,72 @@ static bool lugx_apply_tev_fog(const CCFeatures& cc, const CombinerUniforms& u) 
     return false;
 }
 
-static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u) {
+static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u, const float (*Mc)[4]) {
     u8 type = GX_FOG_NONE;
     float startZ = 0.0f, endZ = 1.0f;
     GXColor color = { 0, 0, 0, 255 };
 
-    // fog_params[3] flags the constant-factor "shroud" blend, which is not a function of
-    // depth at all; the fog unit cannot express it, so leave it to the combiner rather
-    // than approximate it with a depth ramp that would darken the wrong pixels.
+    // fog_params[3] flags the other two ways a fog factor arrives, neither of which is a
+    // function of distance; those go through texture environment stages instead.
     const bool depthFog = cc.opt_fog && u.fog_params[3] == 0.0f && u.fog_params[0] != 0.0f;
-    if (depthFog) {
-        const float fogMul = u.fog_params[0];
-        const float fogOffset = u.fog_params[1];
-        // The N64 ramps its fog factor as (ndc * mul + offset) / 255, so it reaches 0 and
-        // 1 at these two depths, expressed the way the N64 measures depth: normalised,
-        // after the perspective divide, over -1..1.
-        const float ndcAtStart = -fogOffset / fogMul;
-        const float ndcAtEnd = (255.0f - fogOffset) / fogMul;
-        // GX instead wants distances from the eye, and converts the rasterised depth back
-        // to eye space itself. Undo the projection to hand it the matching distances.
-        // Normalised depth d over 0..1 corresponds to an eye distance of
-        // n / (1 - d * (f - n) / f) for the projection this backend loads.
-        auto ndcToEyeDistance = [](float ndc) {
-            const float n = kPassNearZ, f = kPassFarZ;
-            float d = (ndc + 1.0f) * 0.5f;              // -1..1 -> 0..1
-            d = d < 0.0f ? 0.0f : (d > 0.999f ? 0.999f : d); // keep off the far plane
-            const float denom = 1.0f - d * (f - n) / f;
-            return denom > 1e-6f ? n / denom : f;
-        };
-        startZ = ndcToEyeDistance(ndcAtStart);
-        endZ = ndcToEyeDistance(ndcAtEnd);
-        if (endZ <= startZ) {
-            endZ = startZ + 1.0f; // degenerate ramp; keep the hardware's divisor sane
+    if (depthFog && Mc != nullptr) {
+        const float m = u.fog_params[0];
+        const float o = u.fog_params[1];
+
+        // The N64 ramps its factor over depth AFTER the perspective divide, as
+        // (z/w) * mul + offset across 0..255. Its z and w both come from the game's own
+        // matrix, in which they are related linearly: z = -alpha * w + beta. Recover that
+        // pair from the matrix rather than assuming a projection, which is what made an
+        // earlier attempt fog far too heavily: the ramp was converted using this
+        // backend's own near and far planes, which have nothing to do with the game's.
+        // The W column is Mc[i][3] and the Z column Mc[i][2]; for the three directional
+        // rows the two are proportional, and the remaining row carries the offset.
+        int pick = 0;
+        float best = 0.0f;
+        for (int i = 0; i < 3; i++) {
+            const float mag = Mc[i][3] < 0.0f ? -Mc[i][3] : Mc[i][3];
+            if (mag > best) {
+                best = mag;
+                pick = i;
+            }
         }
-        // The eye-space curve is not identical to the N64's (its factor is linear in
-        // post-divide depth, which is hyperbolic in eye space), but the two agree where
-        // the fog begins and where it saturates, which is what the effect is judged on.
-        type = GX_FOG_PERSP_LIN;
-        color.r = float_to_u8(u.fog_color[0]);
-        color.g = float_to_u8(u.fog_color[1]);
-        color.b = float_to_u8(u.fog_color[2]);
+        if (best > 1e-6f) {
+            const float alpha = -Mc[pick][2] / Mc[pick][3];
+            const float beta = Mc[3][2] + alpha * Mc[3][3];
+            // Solve for the distances at which the factor reaches nothing and reaches
+            // full. Both divisors and beta are commonly negative here (the depth axis
+            // points away from the eye), so judge the result by the distances that come
+            // out rather than by the sign of the terms going in.
+            const float denomStart = alpha * m - o;
+            const float denomEnd = denomStart + 255.0f;
+            // Convert a distance into the depth this backend stores for it, which is what
+            // the fog unit compares against once told to read depth as it stands.
+            auto distanceToStoredDepth = [](float w) {
+                const float n = kPassNearZ, f = kPassFarZ;
+                if (w < n) {
+                    w = n;
+                }
+                return 1.0f + (n / (f - n)) * (1.0f - f / w);
+            };
+            const float absStart = denomStart < 0.0f ? -denomStart : denomStart;
+            const float absEnd = denomEnd < 0.0f ? -denomEnd : denomEnd;
+            if (absStart > 1e-6f && absEnd > 1e-6f) {
+                const float wStart = beta * m / denomStart;
+                const float wEnd = beta * m / denomEnd;
+                startZ = distanceToStoredDepth(wStart);
+                endZ = distanceToStoredDepth(wEnd);
+                if (wStart > 0.0f && wEnd > 0.0f && endZ > startZ + 1e-6f) {
+                    // The factor is linear in stored depth, so the fog unit must read
+                    // depth as it stands rather than converting it back to a distance:
+                    // that conversion would bend the ramp into a different curve, which
+                    // showed up as fog thickening too early.
+                    type = GX_FOG_ORTHO_LIN;
+                    color.r = float_to_u8(u.fog_color[0]);
+                    color.g = float_to_u8(u.fog_color[1]);
+                    color.b = float_to_u8(u.fog_color[2]);
+                }
+            }
+        }
     }
 
     if (type == sFogType && startZ == sFogStart && endZ == sFogEnd && color.r == sFogColor.r &&
@@ -586,8 +612,10 @@ static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u) {
     sFogStart = startZ;
     sFogEnd = endZ;
     sFogColor = color;
-    // nearz/farz describe the projection this backend loads (see sPassPersp).
-    GX_SetFog(type, startZ, endZ, kPassNearZ, kPassFarZ, color);
+    // Start and end are given as stored depth, so the near and far handed over are the
+    // span of stored depth itself rather than the projection's planes: read as it stands,
+    // which is the relationship the N64's ramp is written against.
+    GX_SetFog(type, startZ, endZ, 0.0f, 1.0f, color);
 }
 
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -614,7 +642,6 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // Fog reaches us either as a distance ramp, which the fog unit handles, or carried in
     // the vertex alpha, which needs its own stage after the combiner's.
     lugx_apply_tev_fog(cc, mCombinerUniforms);
-    lugx_apply_fog(cc, mCombinerUniforms);
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
 
@@ -718,6 +745,8 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // perspective W coupling, which is in [0][3]/[1][3] for a horizontal camera, not
     // just [2][3]). Non-trivial W column -> 3D -> software-clip.
     const float(*Mc)[4] = mTransform.mtx_palette[slot0];
+    // Depth fog needs this draw's matrix to know how its depth maps to distance.
+    lugx_apply_fog(cc, mCombinerUniforms, Mc);
     const bool swclip = (Mc[0][3] < -0.001f || Mc[0][3] > 0.001f || Mc[1][3] < -0.001f || Mc[1][3] > 0.001f ||
                          Mc[2][3] < -0.001f || Mc[2][3] > 0.001f || Mc[3][3] < 0.999f || Mc[3][3] > 1.001f);
     if (swclip) {
