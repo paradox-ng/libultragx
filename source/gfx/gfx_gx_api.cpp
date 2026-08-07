@@ -468,22 +468,60 @@ static GXColor sFogColor = { 0, 0, 0, 0 };
 // A stage may only reference a single constant colour, so the fog colour goes in one and
 // the factor comes from the vertex. The remaining case, a constant veil with no per-pixel
 // variation, would need a second constant and is left alone for now.
-static bool lugx_apply_vertex_alpha_fog(const CCFeatures& cc, const CombinerUniforms& u) {
-    if (!cc.opt_fog || u.fog_params[3] != 2.0f) {
+static bool lugx_apply_tev_fog(const CCFeatures& cc, const CombinerUniforms& u) {
+    if (!cc.opt_fog) {
         return false;
     }
-    GXColor fog = { float_to_u8(u.fog_color[0]), float_to_u8(u.fog_color[1]), float_to_u8(u.fog_color[2]), 255 };
-    GX_SetTevKColor(GX_KCOLOR0, fog);
-    GX_SetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0);
-    GX_SetTevOrder(GX_TEVSTAGE1, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
-    // out = (1 - factor) * previous + factor * fog colour
-    GX_SetTevColorIn(GX_TEVSTAGE1, GX_CC_CPREV, GX_CC_KONST, GX_CC_RASA, GX_CC_ZERO);
-    GX_SetTevColorOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
-    // Fog changes colour only; carry the combiner's alpha through untouched.
-    GX_SetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
-    GX_SetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
-    GX_SetNumTevStages(2);
-    return true;
+    const GXColor fog = { float_to_u8(u.fog_color[0]), float_to_u8(u.fog_color[1]), float_to_u8(u.fog_color[2]),
+                          255 };
+
+    if (u.fog_params[3] == 2.0f) {
+        // Factor carried per vertex. One stage suffices: the factor arrives as the
+        // rasterised alpha, so the stage's single constant is free for the fog colour.
+        GX_SetTevKColor(GX_KCOLOR0, fog);
+        GX_SetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0);
+        GX_SetTevOrder(GX_TEVSTAGE1, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+        // out = (1 - factor) * previous + factor * fog colour
+        GX_SetTevColorIn(GX_TEVSTAGE1, GX_CC_CPREV, GX_CC_KONST, GX_CC_RASA, GX_CC_ZERO);
+        GX_SetTevColorOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
+        GX_SetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetNumTevStages(2);
+        return true;
+    }
+
+    if (u.fog_params[3] == 1.0f) {
+        // A constant veil over everything. This needs both the fog colour and the blend
+        // amount, and a stage may only reference one constant colour, so it is split in
+        // two: fade what the combiner produced, then add the fog colour already scaled by
+        // the amount. Splitting keeps it exact, where reusing one of the combiner's own
+        // registers would silently corrupt whatever it was holding.
+        const float f = u.fog_params[2];
+        const GXColor amount = { float_to_u8(f), float_to_u8(f), float_to_u8(f), 255 };
+        const GXColor premultiplied = { float_to_u8(u.fog_color[0] * f), float_to_u8(u.fog_color[1] * f),
+                                        float_to_u8(u.fog_color[2] * f), 255 };
+        GX_SetTevKColor(GX_KCOLOR0, amount);
+        GX_SetTevKColor(GX_KCOLOR1, premultiplied);
+
+        // out = (1 - amount) * previous
+        GX_SetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0);
+        GX_SetTevOrder(GX_TEVSTAGE1, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+        GX_SetTevColorIn(GX_TEVSTAGE1, GX_CC_CPREV, GX_CC_ZERO, GX_CC_KONST, GX_CC_ZERO);
+        GX_SetTevColorOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
+        GX_SetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+
+        // out = previous + fog colour * amount
+        GX_SetTevKColorSel(GX_TEVSTAGE2, GX_TEV_KCSEL_K1);
+        GX_SetTevOrder(GX_TEVSTAGE2, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+        GX_SetTevColorIn(GX_TEVSTAGE2, GX_CC_CPREV, GX_CC_ZERO, GX_CC_ZERO, GX_CC_KONST);
+        GX_SetTevColorOp(GX_TEVSTAGE2, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetTevAlphaIn(GX_TEVSTAGE2, GX_CA_ZERO, GX_CA_ZERO, GX_CA_ZERO, GX_CA_APREV);
+        GX_SetTevAlphaOp(GX_TEVSTAGE2, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetNumTevStages(3);
+        return true;
+    }
+    return false;
 }
 
 static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u) {
@@ -563,7 +601,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     lugx_set_alpha_test(cc.opt_alpha_threshold || cc.opt_texture_edge, 128);
     // Fog reaches us either as a distance ramp, which the fog unit handles, or carried in
     // the vertex alpha, which needs its own stage after the combiner's.
-    lugx_apply_vertex_alpha_fog(cc, mCombinerUniforms);
+    lugx_apply_tev_fog(cc, mCombinerUniforms);
     lugx_apply_fog(cc, mCombinerUniforms);
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
