@@ -17,6 +17,7 @@ typedef struct {
     bool fps_counter; // draw an on-screen framerate counter (default on)
     bool debug_profiler; // draw the on-screen CPU profiler rows (dev; default off)
     bool frame_interpolation; // interpolate 30fps logic to 60fps motion (default off)
+    bool antialiasing; // GX 3-sample edge antialiasing (default off; see lugx_config.cpp)
 } LugxConfig;
 
 #ifdef __cplusplus

@@ -11,6 +11,8 @@
 #include <wiiuse/wpad.h>
 #endif
 
+#include "platform/lugx_config.h"
+
 // TEMP boot bring-up trace hooks (defined in the game's Game.cpp).
 extern "C" void bootlog(const char*);
 extern "C" void bootflush(void);
@@ -36,6 +38,47 @@ static void lugx_on_retrace(u32 cnt) {
 // size (the caller sets a matching full-screen viewport first).
 void lugx_fps_overlay(float fbWidth, float fbHeight);
 
+} // namespace Fast
+
+// The live EFB size, published for the rendering backend's full-screen scissor. It is
+// not a constant: it follows the console's TV mode (480 lines on NTSC, 528 on PAL) and
+// halves again under antialiasing, so nothing may hardcode it.
+extern "C" {
+uint16_t g_lugx_efb_width = 640;
+uint16_t g_lugx_efb_height = 528;
+}
+
+namespace Fast {
+
+// Pick the render mode. Without antialiasing this is just the console's preferred mode.
+// With it, the same TV standard and scan mode but the antialiased variant: the EFB holds
+// three coverage samples per pixel, which only fits by halving the line count and
+// dropping colour to 16-bit (see GX_SetPixelFmt below). GX resolves the samples during
+// the copy out to the display, so the rest of the renderer is unaffected - it just draws
+// into a shorter framebuffer that the copy stretches back to full height.
+static GXRModeObj* lugx_select_render_mode(bool wantAa) {
+    GXRModeObj* preferred = VIDEO_GetPreferredMode(NULL);
+    if (!wantAa || preferred == NULL) {
+        return preferred;
+    }
+
+    const bool progressive = (preferred->viTVMode & 3) == VI_PROGRESSIVE;
+    switch (VIDEO_GetCurrentTvMode()) {
+        case VI_NTSC:
+            return progressive ? &TVNtsc480ProgAa : &TVNtsc480IntAa;
+        case VI_PAL:
+            return progressive ? &TVPal524ProgAa : &TVPal524IntAa;
+        case VI_MPAL:
+            return progressive ? &TVMpal480ProgAa : &TVMpal480IntAa;
+        case VI_EURGB60:
+            return progressive ? &TVEurgb60Hz480ProgAa : &TVEurgb60Hz480IntAa;
+        default:
+            // Unknown standard: keep the preferred mode rather than guess a variant
+            // whose timings the display may not accept.
+            return preferred;
+    }
+}
+
 void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/, bool /*startFullScreen*/,
                               uint32_t width, uint32_t height, int32_t /*posX*/, int32_t /*posY*/) {
     if (mInitialized) {
@@ -49,10 +92,19 @@ void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/,
     WPAD_Init();
 #endif
 
-    GXRModeObj* rmode = VIDEO_GetPreferredMode(NULL);
+    const bool antialias = g_lugx_config.antialiasing;
+    GXRModeObj* rmode = lugx_select_render_mode(antialias);
     mRmode = rmode;
-    mWidth = width != 0 ? width : (uint32_t)rmode->fbWidth;
-    mHeight = height != 0 ? height : (uint32_t)rmode->efbHeight;
+    // The requested size is a desktop notion - there is no resizable window here. The
+    // framebuffer is exactly what the video mode gives us, so report that instead;
+    // rendering at any other size would land the picture in the wrong place.
+    (void)width;
+    (void)height;
+    mWidth = (uint32_t)rmode->fbWidth;
+    mHeight = (uint32_t)rmode->efbHeight;
+    // Publish the EFB size for the rendering backend (full-screen scissor).
+    g_lugx_efb_width = rmode->fbWidth;
+    g_lugx_efb_height = rmode->efbHeight;
 
     mFrameBuffer[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
     mFrameBuffer[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
@@ -78,7 +130,10 @@ void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/,
     GX_SetDispCopySrc(0, 0, rmode->fbWidth, rmode->efbHeight);
     GX_SetDispCopyDst(rmode->fbWidth, GX_SetDispCopyYScale(GX_GetYScaleFactor(rmode->efbHeight, rmode->xfbHeight)));
     GX_SetCopyFilter(rmode->aa, rmode->sample_pattern, GX_TRUE, rmode->vfilter);
-    GX_SetPixelFmt(GX_PF_RGB8_Z24, GX_ZC_LINEAR);
+    // Antialiasing needs the 16-bit colour / 16-bit depth pixel format: that is what
+    // leaves room in the embedded framebuffer for three coverage samples per pixel.
+    // Without it, the wider 24-bit format keeps full colour and depth precision.
+    GX_SetPixelFmt(antialias ? GX_PF_RGB565_Z16 : GX_PF_RGB8_Z24, GX_ZC_LINEAR);
 
     mStartTicks = gettime();
     mInitialized = true;
@@ -161,7 +216,11 @@ void GfxWindowBackendGX::SwapBuffersEnd() {
     GXRModeObj* rm = (GXRModeObj*)mRmode;
     GX_SetViewport(0.0f, 0.0f, (f32)rm->fbWidth, (f32)rm->efbHeight, 0.0f, 1.0f);
     GX_SetScissor(0, 0, rm->fbWidth, rm->efbHeight);
-    lugx_fps_overlay((float)rm->fbWidth, (float)rm->efbHeight);
+    // Size the overlay against the DISPLAYED height, not the framebuffer's: under
+    // antialiasing the framebuffer holds half the lines and the copy stretches them
+    // back out, so measuring in displayed pixels keeps the counter the same size in
+    // both modes. Its coordinates are normalised, so drawing still covers the EFB.
+    lugx_fps_overlay((float)rm->fbWidth, (float)rm->xfbHeight);
     GX_CopyDisp(mFrameBuffer[mFbIndex], GX_TRUE);
     GX_DrawDone();
     VIDEO_SetNextFramebuffer(mFrameBuffer[mFbIndex]);

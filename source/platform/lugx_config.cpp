@@ -13,6 +13,7 @@ LugxConfig g_lugx_config = {
     /* fps_counter */ true,
     /* debug_profiler */ false,
     /* frame_interpolation */ false,
+    /* antialiasing */ false,
 };
 
 static const char* kTemplate =
@@ -36,7 +37,15 @@ static const char* kTemplate =
     "# Frame interpolation: render in-between frames for 60fps motion. Game logic still\n"
     "# runs at its native 30fps (costs more CPU/GPU per second).\n"
     "#   true | false\n"
-    "frame_interpolation = false\n";
+    "frame_interpolation = false\n"
+    "\n"
+    "# Antialiasing: the console's hardware 3-sample edge antialiasing, like the N64's.\n"
+    "# Smooths the jagged edges of polygons. The tradeoff is real: to fit three samples\n"
+    "# per pixel the framebuffer holds half as many lines and 16-bit instead of 24-bit\n"
+    "# colour, so edges get smoother while fine detail softens and gradients may band\n"
+    "# slightly. Costs graphics-chip time, not CPU. Try both and keep what you prefer.\n"
+    "#   true | false\n"
+    "antialiasing = false\n";
 
 // Trim leading/trailing ASCII whitespace in place, returning the start.
 static char* trim(char* s) {
@@ -75,6 +84,8 @@ static void apply_kv(const char* key, const char* val) {
         g_lugx_config.debug_profiler = parse_bool(val, g_lugx_config.debug_profiler);
     } else if (!strcasecmp(key, "frame_interpolation")) {
         g_lugx_config.frame_interpolation = parse_bool(val, g_lugx_config.frame_interpolation);
+    } else if (!strcasecmp(key, "antialiasing")) {
+        g_lugx_config.antialiasing = parse_bool(val, g_lugx_config.antialiasing);
     }
 }
 

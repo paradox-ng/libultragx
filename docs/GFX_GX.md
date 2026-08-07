@@ -72,11 +72,28 @@ resident.
 interpolated in-between frame per logic tick for 60 fps motion without running the
 simulation at double speed.
 
+## Antialiasing
+
+GX's hardware 3-sample edge antialiasing is available through the `antialiasing` option
+in `config.ini` (off by default). The backend selects the AA render mode matching the
+console's TV standard and scan mode, and switches the EFB to `GX_PF_RGB565_Z16` - the
+three coverage samples per pixel only fit at 16-bit colour and depth. GX resolves the
+samples while copying the EFB out to the display.
+
+The tradeoff is real: an AA render mode holds half as many EFB lines (480 becomes 242 on
+NTSC) and the copy stretches them back to full height, so edges get smoother while
+vertical detail softens and gradients may band slightly. It costs GP time rather than
+CPU, which is free in practice here because the renderer is CPU-bound. Note that the
+non-AA path already renders 640x480 against the N64's native 320x240, so it is already
+supersampling vertically; whether AA is a net win is a judgement call for real hardware,
+as emulators do not reproduce the copy filter faithfully.
+
+Because the EFB size varies (per TV standard, and again under AA), nothing may assume
+it: the window publishes the live size, and the interpreter takes its render dimensions
+from the window rather than requesting a size of its own.
+
 ## Not yet done
 
-- Antialiasing. GX 3-sample MSAA needs a reduced-height EFB (`GX_PF_RGB565_Z16` + an
-  AA render mode), which changes the framebuffer dimensions and needs the surrounding
-  dimensional plumbing.
 - Render-to-texture. The EFB-copy-to-texture path is stubbed (the game renders direct
   to the EFB), so effects that read back the framebuffer are inert.
 - Hardware T&L. The transform stays on the CPU; moving it onto GX would require the

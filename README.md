@@ -53,7 +53,7 @@ progress, so the Wii build is what currently runs.
 - **Platform.** SD card mounting (SD2SP2 / SD Gecko / Wii SD) and per-game path
   resolution from `argv[0]`. A plain-text `config.ini` beside the archive selects the
   aspect ratio (4:3, 16:9, or the Wii's system setting), the on-screen fps counter,
-  and frame interpolation.
+  frame interpolation, and antialiasing.
 
 See `docs/ARCHITECTURE.md` for the design and roadmap.
 

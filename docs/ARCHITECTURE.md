@@ -142,7 +142,9 @@ on a console with no built-in SD slot) is the main remaining platform item.
 
 Ongoing work: performance headroom for the heaviest scenes and for the heavier
 ports (reducing the DL-walk interpreter cost, and a possible hardware-T&L rewrite
-around native quantized vertex arrays), antialiasing, and additional ports.
+around native quantized vertex arrays), and additional ports. Antialiasing has
+landed as a `config.ini` option; how much it is worth is a question for real
+hardware, since emulators do not reproduce the copy filter faithfully.
 
 ## Notes / constraints
 

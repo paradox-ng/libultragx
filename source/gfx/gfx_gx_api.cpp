@@ -15,6 +15,11 @@
 #include <cstdio>
 #include <unistd.h>
 
+// The live EFB size, set by the window backend from the selected render mode (it
+// varies by TV standard and halves under antialiasing, so it is never assumed).
+extern "C" uint16_t g_lugx_efb_width;
+extern "C" uint16_t g_lugx_efb_height;
+
 namespace Fast {
 
 // The GX modelview (affine camera/view) DrawTriangles loads into GX_PNMTX0.
@@ -356,7 +361,9 @@ void GfxRenderingAPIGX::SetScissor(int x, int y, int width, int height) {
     (void)y;
     (void)width;
     (void)height;
-    GX_SetScissor(0, 0, 640, 528);
+    // Take the size from the window rather than assuming one: it differs per TV
+    // standard (480 lines on NTSC, 528 on PAL) and halves again under antialiasing.
+    GX_SetScissor(0, 0, g_lugx_efb_width, g_lugx_efb_height);
 }
 
 void GfxRenderingAPIGX::SetUseAlpha(bool useAlpha) {

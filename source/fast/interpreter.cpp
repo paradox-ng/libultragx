@@ -6186,6 +6186,22 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mWapi = wapi;
     mRapi = rapi;
     mWapi->Init(game_name, rapi->GetName(), start_in_fullscreen, width, height, posX, posY);
+    // On console the framebuffer size is dictated by the video mode rather than
+    // requested: it follows the TV standard (480 lines on NTSC, 528 on PAL) and halves
+    // again under antialiasing. Adopt what the window actually created, so viewports,
+    // scissors and 2D scaling are all expressed in real framebuffer pixels. An
+    // antialiased framebuffer is anisotropic (the copy to the display stretches it back
+    // to full height), which is fine here because the projection's aspect ratio comes
+    // from the config rather than from these dimensions - see mCurDimensions.aspect_ratio.
+    {
+        uint32_t windowWidth = 0, windowHeight = 0;
+        int32_t windowPosX = 0, windowPosY = 0;
+        mWapi->GetDimensions(&windowWidth, &windowHeight, &windowPosX, &windowPosY);
+        if (windowWidth != 0 && windowHeight != 0) {
+            width = windowWidth;
+            height = windowHeight;
+        }
+    }
     mRapi->Init();
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
     mCurDimensions.internal_mul =
