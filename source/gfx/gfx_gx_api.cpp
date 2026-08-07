@@ -437,6 +437,82 @@ struct LugxClipVert {
     float a[9];
 };
 
+// Fog. GX has a dedicated fog unit, so this costs no TEV stage and no CPU work: the
+// hardware blends each pixel toward the fog colour as a function of its depth.
+//
+// Picking the mode needs care. The N64 derives its fog factor from the vertex's depth
+// AFTER the perspective divide, so the factor is linear in screen depth. GX's "PERSP"
+// modes undo the projection to make fog linear in eye depth instead, which is a
+// different curve. The ORTHO modes take the depth as-is, and since this backend already
+// hands GX post-divide coordinates through a fixed pass-through projection, ORTHO is the
+// mode that reproduces what the N64 did.
+//
+// The interpreter hands us the N64's own multiplier and offset, a ramp over the depth
+// range expressed in 0..255. Solving that against GX's (depth - start) / (end - start)
+// gives the start and end below.
+// Near and far planes of the fixed pass-through projection this backend loads (see
+// sPassPersp). The fog unit needs them to turn rasterised depth back into eye space.
+static constexpr float kPassNearZ = 16.0f;
+static constexpr float kPassFarZ = 24000.0f;
+
+static u8 sFogType = GX_FOG_NONE;
+static float sFogStart = 0.0f, sFogEnd = 0.0f;
+static GXColor sFogColor = { 0, 0, 0, 0 };
+
+static void lugx_apply_fog(const CCFeatures& cc, const CombinerUniforms& u) {
+    u8 type = GX_FOG_NONE;
+    float startZ = 0.0f, endZ = 1.0f;
+    GXColor color = { 0, 0, 0, 255 };
+
+    // fog_params[3] flags the constant-factor "shroud" blend, which is not a function of
+    // depth at all; the fog unit cannot express it, so leave it to the combiner rather
+    // than approximate it with a depth ramp that would darken the wrong pixels.
+    const bool depthFog = cc.opt_fog && u.fog_params[3] == 0.0f && u.fog_params[0] != 0.0f;
+    if (depthFog) {
+        const float fogMul = u.fog_params[0];
+        const float fogOffset = u.fog_params[1];
+        // The N64 ramps its fog factor as (ndc * mul + offset) / 255, so it reaches 0 and
+        // 1 at these two depths, expressed the way the N64 measures depth: normalised,
+        // after the perspective divide, over -1..1.
+        const float ndcAtStart = -fogOffset / fogMul;
+        const float ndcAtEnd = (255.0f - fogOffset) / fogMul;
+        // GX instead wants distances from the eye, and converts the rasterised depth back
+        // to eye space itself. Undo the projection to hand it the matching distances.
+        // Normalised depth d over 0..1 corresponds to an eye distance of
+        // n / (1 - d * (f - n) / f) for the projection this backend loads.
+        auto ndcToEyeDistance = [](float ndc) {
+            const float n = kPassNearZ, f = kPassFarZ;
+            float d = (ndc + 1.0f) * 0.5f;              // -1..1 -> 0..1
+            d = d < 0.0f ? 0.0f : (d > 0.999f ? 0.999f : d); // keep off the far plane
+            const float denom = 1.0f - d * (f - n) / f;
+            return denom > 1e-6f ? n / denom : f;
+        };
+        startZ = ndcToEyeDistance(ndcAtStart);
+        endZ = ndcToEyeDistance(ndcAtEnd);
+        if (endZ <= startZ) {
+            endZ = startZ + 1.0f; // degenerate ramp; keep the hardware's divisor sane
+        }
+        // The eye-space curve is not identical to the N64's (its factor is linear in
+        // post-divide depth, which is hyperbolic in eye space), but the two agree where
+        // the fog begins and where it saturates, which is what the effect is judged on.
+        type = GX_FOG_PERSP_LIN;
+        color.r = float_to_u8(u.fog_color[0]);
+        color.g = float_to_u8(u.fog_color[1]);
+        color.b = float_to_u8(u.fog_color[2]);
+    }
+
+    if (type == sFogType && startZ == sFogStart && endZ == sFogEnd && color.r == sFogColor.r &&
+        color.g == sFogColor.g && color.b == sFogColor.b) {
+        return; // already resident; the fog unit keeps its state between draws
+    }
+    sFogType = type;
+    sFogStart = startZ;
+    sFogEnd = endZ;
+    sFogColor = color;
+    // nearz/farz describe the projection this backend loads (see sPassPersp).
+    GX_SetFog(type, startZ, endZ, kPassNearZ, kPassFarZ, color);
+}
+
 void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     (void)buf_vbo_len;
     if (g_gx_skip_draw || mCurrentShader == nullptr || buf_vbo_num_tris == 0) {
@@ -458,6 +534,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // this for the GL shader's discard, so GX must apply it here or the transparent
     // texels render opaque (a solid rectangle around text, broken cutouts).
     lugx_set_alpha_test(cc.opt_alpha_threshold || cc.opt_texture_edge, 128);
+    lugx_apply_fog(cc, mCombinerUniforms);
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
 
@@ -549,7 +626,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         static Mtx44 sPassPersp;
         static bool sPassBuilt = false;
         if (!sPassBuilt) {
-            const float n = 16.0f, f = 24000.0f;
+            const float n = kPassNearZ, f = kPassFarZ;
             memset(sPassPersp, 0, sizeof(sPassPersp));
             sPassPersp[0][0] = 1.0f;
             sPassPersp[1][1] = 1.0f;

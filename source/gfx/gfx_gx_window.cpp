@@ -108,6 +108,12 @@ void GfxWindowBackendGX::Init(const char* /*gameName*/, const char* /*apiName*/,
 
     mFrameBuffer[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
     mFrameBuffer[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    // Freshly allocated framebuffers hold whatever was in memory, and the display
+    // expects colour in a form where all-zero bytes are bright green - which is what
+    // the console shows for the moment between switching the picture on and the first
+    // rendered frame arriving. Paint them black first.
+    VIDEO_ClearFrameBuffer(rmode, mFrameBuffer[0], COLOR_BLACK);
+    VIDEO_ClearFrameBuffer(rmode, mFrameBuffer[1], COLOR_BLACK);
     VIDEO_Configure(rmode);
     VIDEO_SetNextFramebuffer(mFrameBuffer[0]);
     VIDEO_SetBlack(FALSE);
