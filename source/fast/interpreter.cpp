@@ -1202,6 +1202,26 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
     UploadBaseTexture(mTexUploadBuffer, width, height);
 }
 
+void Interpreter::ExpandPaletteEntry(uint16_t entry, uint8_t* rgbaOut) const {
+    // The N64 stores palettes in one of two formats, chosen by the texture-lookup field
+    // of the RDP's high other-mode word: 16-bit colour with a single alpha bit, or an
+    // intensity/alpha pair. Reading an intensity/alpha palette as though it were colour
+    // turns bright entries magenta and scrambles their transparency, so honour the mode
+    // rather than assuming one.
+    if ((mRdp->other_mode_h & (3U << G_MDSFT_TEXTLUT)) == G_TT_IA16) {
+        const uint8_t intensity = entry >> 8;
+        rgbaOut[0] = intensity;
+        rgbaOut[1] = intensity;
+        rgbaOut[2] = intensity;
+        rgbaOut[3] = entry & 0xFF;
+        return;
+    }
+    rgbaOut[0] = SCALE_5_8(entry >> 11);
+    rgbaOut[1] = SCALE_5_8((entry >> 6) & 0x1f);
+    rgbaOut[2] = SCALE_5_8((entry >> 1) & 0x1f);
+    rgbaOut[3] = (entry & 1) ? 255 : 0;
+}
+
 void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     uint32_t fullImageLineSizeBytes =
         mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes;
@@ -1282,14 +1302,7 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
                 continue;
             }
             uint16_t col16 = (palette[idx * 2] << 8) | palette[idx * 2 + 1]; // Big endian load
-            uint8_t a = col16 & 1;
-            uint8_t r = col16 >> 11;
-            uint8_t g = (col16 >> 6) & 0x1f;
-            uint8_t b = (col16 >> 1) & 0x1f;
-            mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-            mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-            mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-            mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+            ExpandPaletteEntry(col16, &mTexUploadBuffer[4 * i]);
             i++;
         }
     }
@@ -1334,14 +1347,7 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
             }
             uint16_t col16 = (mRdp->palettes[idx / 128][(idx % 128) * 2] << 8) |
                              mRdp->palettes[idx / 128][(idx % 128) * 2 + 1]; // Big endian load
-            uint8_t a = col16 & 1;
-            uint8_t r = col16 >> 11;
-            uint8_t g = (col16 >> 6) & 0x1f;
-            uint8_t b = (col16 >> 1) & 0x1f;
-            mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-            mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-            mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-            mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+            ExpandPaletteEntry(col16, &mTexUploadBuffer[4 * i]);
         }
     }
 
@@ -2418,7 +2424,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // The same index texture is reused across TLUT swaps. Mip chains, masked or
     // blended textures, and HD/raw replacements fall back to CPU decoding.
     bool palettized[2] = { false, false };
-    for (int i = 0; i < 2; i++) {
+    // Handing the backend raw palette indices to resolve later saves re-uploading a
+    // texture when only its palette changes, but it only works where the backend can
+    // actually do that lookup. Where it cannot, the indices would be drawn as if they
+    // were colours; ImportTextureCi4/Ci8 expand them through the palette on the CPU
+    // instead, which costs an upload but is correct everywhere.
+    const bool resolveIndicesInBackend = mRapi->SupportsPaletteLookup();
+    for (int i = 0; resolveIndicesInBackend && i < 2; i++) {
         uint32_t pal_tile = mRdp->first_tile_index + i;
         if (i == 1 && mRdp->first_tile_index >= 2) {
             pal_tile = mRdp->first_tile_index;

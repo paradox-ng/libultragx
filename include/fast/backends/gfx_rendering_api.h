@@ -117,6 +117,16 @@ class GfxRenderingAPI {
     virtual const char* GetName() = 0;
     virtual int GetMaxTextureSize() = 0;
     virtual GfxClipParameters GetClipParameters() = 0;
+    // Whether the backend resolves colour-index textures itself, by sampling the raw
+    // indices against a palette texture the way a shader-based backend does. Backends
+    // that cannot say so here get colour-index textures expanded through the palette on
+    // the CPU instead, which anything can display. Answering yes without implementing
+    // the lookup draws the indices as though they were colours, which reads as very
+    // dark, mostly-red artwork. GX resolves texels through fixed-function stages with
+    // no dependent palette fetch, so it keeps the default.
+    virtual bool SupportsPaletteLookup() {
+        return false;
+    }
     virtual void UnloadShader(ShaderProgram* oldPrg) = 0;
     virtual void LoadShader(ShaderProgram* newPrg) = 0;
     virtual void ClearShaderCache() = 0;

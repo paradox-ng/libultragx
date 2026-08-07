@@ -500,6 +500,9 @@ class Interpreter {
     void ImportTextureI8(int tile, bool importReplacement);
     void ImportTextureCi4(int tile, bool importReplacement);
     void ImportTextureCi8(int tile, bool importReplacement);
+    // Expand one palette entry into RGBA, honouring the palette format currently
+    // selected in the RDP state (see the definition).
+    void ExpandPaletteEntry(uint16_t entry, uint8_t* rgbaOut) const;
     void ImportTextureRaw(int tile, bool importReplacement);
     void ImportTextureImg(int tile, bool importReplacement);
     void ImportTexture(int i, int tile, bool importReplacement);
