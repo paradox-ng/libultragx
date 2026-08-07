@@ -315,12 +315,24 @@ static bool sLastBlend = false;
 static int sVpX = 0, sVpY = 0, sVpW = 0, sVpH = 0;
 static float sAppliedFarZ = 1.0f;
 static bool sDecalOn = false;
-static const float kGxDecalBias = 0.0001f;
+// Shadows and other decals sit exactly on the surface they belong to, so they need to be
+// nudged toward the camera to win the depth test against it. The nudge has to be a fixed
+// distance in the world: depth is stored so that it bunches up with distance, so a fixed
+// nudge in stored depth would be worth a few units near the camera but tens of units far
+// away, which is enough for a shadow to cover an object standing in front of it.
+//
+// Because this backend transforms vertices itself and hands GX a depth that is the
+// distance from the eye, the nudge can simply be subtracted from that distance. A few
+// units is comfortably more than the rounding between a floor and the shadow lying on it,
+// and far less than the gap to anything genuinely in front. It moves nothing on screen;
+// it only decides which surface wins where they overlap.
+static const float kDecalEyeBias = 5.0f;
 
 static void lugx_issue_viewport() {
-    const float farZ = sDecalOn ? (1.0f - kGxDecalBias) : 1.0f;
-    GX_SetViewport((f32)sVpX, (f32)sVpY, (f32)sVpW, (f32)sVpH, 0.0f, farZ);
-    sAppliedFarZ = farZ;
+    // The decal bias is applied per vertex, in the distance the vertex actually sits at
+    // (see kDecalEyeBias), so the depth range stays whole.
+    GX_SetViewport((f32)sVpX, (f32)sVpY, (f32)sVpW, (f32)sVpH, 0.0f, 1.0f);
+    sAppliedFarZ = 1.0f;
 }
 
 void GfxRenderingAPIGX::SetDepthTestAndMask(bool depth_test, bool z_upd) {
@@ -949,7 +961,10 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             return o;
         };
         auto emitCV = [&](const LugxClipVert& c) {
-            float cw = c.w < 0.001f ? 0.001f : c.w;
+            // Pull decals a fixed distance toward the eye so they beat the surface they
+            // lie on, at any distance (see kDecalEyeBias).
+            float cw = sDecalOn ? c.w - kDecalEyeBias : c.w;
+            cw = cw < 0.001f ? 0.001f : cw;
             GX_Position3f32(c.x, c.y, -cw);
             int k = 0;
             if (submitNormal) {
