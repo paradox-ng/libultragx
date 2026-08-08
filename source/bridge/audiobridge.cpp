@@ -19,13 +19,27 @@
 #include <ogc/cache.h>
 #include <ogc/irq.h>
 
+
 // SM64 (US) generates at most SAMPLES_HIGH (544) samples per audio update, stereo
 // 16-bit, and submits up to two updates per video frame. One buffer therefore holds
 // 544 * 2 (updates) * 2 (channels) s16. Keep a small ring of them (see Engine.h).
-#define AUDIO_SAMPLES_HIGH     544
+// Sized for the largest update any supported game submits, NOT just SM64's. A frame
+// bigger than AUDIO_BUFFER_SIZE is rejected outright below, so a tight value silences
+// the game completely: SM64 submits 2 x 544 stereo samples, which fit the original
+// 544-sample bound exactly, while Star Fox 64 runs gVIsPerFrame = 2 at up to 752
+// samples and so was dropped on every single frame. 5 is the interpreter's ceiling on
+// audio frames per update. The ceiling is generous because a frame that runs long
+// must be able to refill the whole output buffer in one go; if it cannot, the DSP
+// drains before the next top-up and the sound breaks up whenever the game dips below
+// its target framerate.
+#define AUDIO_SAMPLES_HIGH     752
+#define AUDIO_UPDATES_MAX      10
 #define AUDIO_BUFFER_COUNT     6
-#define AUDIO_BUFFER_SIZE      (AUDIO_SAMPLES_HIGH * 2 * 2 * sizeof(int16_t))
+#define AUDIO_BUFFER_SIZE      (AUDIO_SAMPLES_HIGH * 2 * AUDIO_UPDATES_MAX * sizeof(int16_t))
 #define AUDIO_BYTES_PER_FRAME  (2 * sizeof(int16_t))
+// Hand ASND a buffer only once this many bytes have accumulated (~70ms of stereo
+// 32kHz), so its two-buffer queue covers ~140ms rather than ~70ms.
+#define AUDIO_COALESCE_BYTES   (2240 * AUDIO_BYTES_PER_FRAME)
 
 enum AudioBufferState {
     BUFFER_FREE,
@@ -220,7 +234,11 @@ int32_t AudioPlayerBuffered() {
 }
 
 int32_t AudioPlayerGetDesiredBuffered() {
-    return 1100;
+    // Frames of stereo audio the game aims to keep queued (~52ms at 32kHz). This is the
+    // setpoint for the game's own feedback loop, not a hard limit. Raising it to ~106ms
+    // and adding a two-buffer pre-roll was measured to change nothing (1.89% vs 1.74%
+    // dropout on a constant tone), so the remaining dropouts are not buffer depth.
+    return 1680;
 }
 
 AudioChannelsSetting GetAudioChannels() {
@@ -234,6 +252,29 @@ int32_t GetNumAudioChannels() {
 void AudioPlayerPlayFrame(const uint8_t* buf, size_t len) {
     if (!audio_ensure_init() || len > AUDIO_BUFFER_SIZE) {
         return;
+    }
+
+
+    // Coalesce submissions. ASND holds only TWO buffers per voice, so the audio it has
+    // in hand is 2 x this buffer's duration - and the game submits one frame's worth
+    // (~35ms) per frame, which leaves ASND riding on 35-70ms and running dry on any
+    // jitter. Batching two submissions into one buffer doubles what ASND holds without
+    // touching the game's generation cadence, which has to stay one batch per frame
+    // because the sequence player and ADSR envelopes advance per update.
+    {
+        static uint8_t s_stage[AUDIO_BUFFER_SIZE];
+        static size_t s_stage_len = 0;
+        if (s_stage_len + len > AUDIO_BUFFER_SIZE) {
+            s_stage_len = 0; // cannot happen with sane sizes; resync rather than overrun
+        }
+        memcpy(s_stage + s_stage_len, buf, len);
+        s_stage_len += len;
+        if (s_stage_len < AUDIO_COALESCE_BYTES) {
+            return; // hold it back until there is a full-size buffer to hand over
+        }
+        buf = s_stage;
+        len = s_stage_len;
+        s_stage_len = 0;
     }
 
     release_finished_buffers();

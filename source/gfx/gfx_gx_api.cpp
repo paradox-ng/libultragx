@@ -64,6 +64,14 @@ volatile uint64_t g_lugx_prof_vtx_ticks = 0;  // GfxSpVertex (vertex load/expand
 volatile uint64_t g_lugx_prof_tri_ticks = 0;  // GfxSpTri1 whole (includes its Flush->draw)
 volatile uint64_t g_lugx_prof_comb_ticks = 0; // LookupOrCreateColorCombiner
 volatile uint32_t g_lugx_prof_frames = 0;
+
+// Debug readout. Any code - backend, runtime or game - can publish up to five integers
+// here; with the profiler overlay enabled they replace the timing rows on screen. A
+// console run has no other high-bandwidth channel back out: framedumps capture only GX
+// output, and the SD-card log syncs back solely on a clean shutdown, not on the
+// timeout-kill that ends an automated run.
+volatile int g_lugx_debug_values[5] = { 0, 0, 0, 0, 0 };
+volatile int g_lugx_debug_values_active = 0;
 }
 namespace {
 struct LugxProfScope {
@@ -490,8 +498,16 @@ struct LugxClipVert {
 // gives the start and end below.
 // Near and far planes of the fixed pass-through projection this backend loads (see
 // sPassPersp). The fog unit needs them to turn rasterised depth back into eye space.
-static constexpr float kPassNearZ = 16.0f;
-static constexpr float kPassFarZ = 24000.0f;
+// These must ENCLOSE the near/far range of every game this runs, because GX clips
+// against them: anything nearer than kPassNearZ or further than kPassFarZ is cut even
+// though the game's own projection meant to draw it. Star Fox 64 sets gProjectNear =
+// 10 and gProjectFar up to 30000, so the previous 16/24000 sliced the front off
+// geometry that came within 16 units of the camera (visible on Arwings passing close
+// to the camera in the intro) and clipped anything beyond 24000. Widening the range
+// costs depth resolution at distance, which is why it is not opened further than the
+// games need.
+static constexpr float kPassNearZ = 8.0f;
+static constexpr float kPassFarZ = 32000.0f;
 
 static u8 sFogType = GX_FOG_NONE;
 static float sFogStart = 0.0f, sFogEnd = 0.0f;
@@ -767,6 +783,26 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     if (slot0 < 0 || slot0 >= GFX_MTX_PALETTE_SIZE) {
         slot0 = 0;
     }
+    // A batch may mix matrices: each vertex names its own, and the interpreter packs
+    // several into one draw. The flat path below hands GX a single matrix and submits
+    // untransformed positions, which is only right while every vertex names the same
+    // one; where they differ the rest are transformed by a matrix that is not theirs and
+    // fly off across the screen. Detect that here and transform on the CPU instead,
+    // which is what the perspective path already does for every vertex.
+    bool mixedMatrices = false;
+    {
+        const size_t vertCount = buf_vbo_num_tris * 3;
+        for (size_t i = 1; i < vertCount; i++) {
+            int s = (int)buf_vbo[i * (size_t)stride + 4];
+            if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
+                s = 0;
+            }
+            if (s != slot0) {
+                mixedMatrices = true;
+                break;
+            }
+        }
+    }
     // Detect 2D vs 3D by transforming v0's w through its slot matrix: 2D rects come
     // pre-transformed to clip space with an identity palette matrix (w stays 1); 3D
     // geometry has w = camera depth != 1. 3D uses the Wii-port software-clip technique
@@ -818,12 +854,17 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // game's transform belongs there, leaving the projection to do nothing but hand
         // the result through and settle the depth convention.
         Mtx mv;
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 4; c++) {
-                // The interpreter composes its transform the other way round from GX
-                // (a point multiplies the matrix rather than the matrix a point), so it
-                // arrives transposed.
-                mv[r][c] = mTransform.mtx_palette[slot0][c][r];
+        if (mixedMatrices) {
+            // Positions are transformed below, one vertex at a time by its own matrix.
+            lugx_mtx_identity(mv);
+        } else {
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 4; c++) {
+                    // The interpreter composes its transform the other way round from GX
+                    // (a point multiplies the matrix rather than the matrix a point), so
+                    // it arrives transposed.
+                    mv[r][c] = mTransform.mtx_palette[slot0][c][r];
+                }
             }
         }
         GX_LoadPosMtxImm(mv, GX_PNMTX0);
@@ -1109,7 +1150,30 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         GX_Begin(GX_TRIANGLES, GX_VTXFMT0, (u16)verts);
         for (size_t i = 0; i < verts; i++) {
             const float* v = &buf_vbo[i * (size_t)stride];
-            GX_Position3f32(v[0], v[1], v[2]);
+            if (mixedMatrices) {
+                int s = (int)v[4];
+                if (s < 0 || s >= GFX_MTX_PALETTE_SIZE) {
+                    s = 0;
+                }
+                const float(*M)[4] = mTransform.mtx_palette[s];
+                const float ox = v[0], oy = v[1], oz = v[2];
+                // Keep depth inside the clip volume. Flat geometry arrives already in
+                // clip space, and a game can hand us z fractionally outside it: Star
+                // Fox's starfield is a quad at object z = 0 drawn through an ortho whose
+                // near/far are the 3D ones (10 and up to 30000), which maps z = 0 to
+                // about -1.0007 - a hair past the near plane, so GX threw away every
+                // star. Clamping rescues geometry that would otherwise vanish entirely,
+                // and costs nothing real here because flat draws are ordered by
+                // submission, not by depth (the starfield disables the Z buffer).
+                float cz = ox * M[0][2] + oy * M[1][2] + oz * M[2][2] + M[3][2];
+                if (cz < -1.0f) { cz = -1.0f; }
+                if (cz > 1.0f) { cz = 1.0f; }
+                GX_Position3f32(ox * M[0][0] + oy * M[1][0] + oz * M[2][0] + M[3][0],
+                                ox * M[0][1] + oy * M[1][1] + oz * M[2][1] + M[3][1],
+                                cz);
+            } else {
+                GX_Position3f32(v[0], v[1], v[2]);
+            }
             emitAttribs(v);
         }
         GX_End();
@@ -1328,7 +1392,8 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
     // Rows: 0 fps | 1 whole-frame us | 2 draw-path us | 3 GfxSpVertex us.
     // walk (DL dispatch) = total - draw; the vtx row is a sub-cost inside the walk.
     const bool showFps = g_lugx_config.fps_counter;
-    const bool showProf = g_lugx_config.debug_profiler;
+    const bool showDebug = g_lugx_debug_values_active != 0;
+    const bool showProf = g_lugx_config.debug_profiler || showDebug;
     const float dw = 15.0f, dh = 24.0f, t = 4.0f, gap = 6.0f;
     const float xr = fw - 14.0f;
     const float y0 = 12.0f, y1 = 44.0f, y2 = 76.0f, y3 = 108.0f, y4 = 140.0f, y5 = 172.0f;
@@ -1339,7 +1404,14 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
     if (showFps) {
         lugx_fps_number(fps, 2, xr, y0, dw, dh, t, gap);
     }
-    if (showProf) {
+    if (showDebug) {
+        // Published debug integers take the timing rows over.
+        lugx_fps_number(g_lugx_debug_values[0], 5, xr, y1, dw, dh, t, gap);
+        lugx_fps_number(g_lugx_debug_values[1], 5, xr, y2, dw, dh, t, gap);
+        lugx_fps_number(g_lugx_debug_values[2], 5, xr, y3, dw, dh, t, gap);
+        lugx_fps_number(g_lugx_debug_values[3], 5, xr, y4, dw, dh, t, gap);
+        lugx_fps_number(g_lugx_debug_values[4], 5, xr, y5, dw, dh, t, gap);
+    } else if (showProf) {
         lugx_fps_number(totalUs, 5, xr, y1, dw, dh, t, gap); // whole-frame render
         lugx_fps_number(drawUs, 5, xr, y2, dw, dh, t, gap);  // DrawTriangles (transform+emit+state)
         lugx_fps_number(vtxUs, 5, xr, y3, dw, dh, t, gap);   // GfxSpVertex
@@ -1353,7 +1425,7 @@ static void lugx_draw_fps_overlay(int fps, int totalUs, int drawUs, int vtxUs, i
 // any render-to-framebuffer resolve the game did).
 void lugx_fps_overlay(float fbWidth, float fbHeight) {
     g_lugx_prof_enabled = g_lugx_config.debug_profiler ? 1 : 0; // gate the hot-path timers
-    if (!g_lugx_config.fps_counter && !g_lugx_config.debug_profiler) {
+    if (!g_lugx_config.fps_counter && !g_lugx_config.debug_profiler && !g_lugx_debug_values_active) {
         return;
     }
     static uint64_t lastTick = 0;

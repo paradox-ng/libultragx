@@ -603,7 +603,11 @@ class Interpreter {
     // (aspect scale folded in) captured at vertex-load time. Each LoadedVertex
     // references an entry; GfxSpTri1 maps the referenced entries onto the small
     // per-draw matrix palette uploaded to the vertex shader.
-    static constexpr size_t MTX_HISTORY_SIZE = 64;
+    // 256, not 64: Star Fox's starfield pushes a matrix per star (~150 a frame), so a
+    // 64-entry ring is overwritten several times per frame. Overwriting an entry that a
+    // pending batch still references forces a Flush (see AppendMtxHistory), so a short
+    // ring is correct but splits the frame into many small draws. Costs 16KB.
+    static constexpr size_t MTX_HISTORY_SIZE = 256;
     float mMtxHistory[MTX_HISTORY_SIZE][4][4]{};
     uint8_t mMtxHistoryHead = 0;
     uint8_t mMtxHistoryCurrent = 0;
