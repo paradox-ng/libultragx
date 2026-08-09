@@ -23,3 +23,10 @@ inline std::string format(const std::string& f, Args&&...) {
 }
 
 } // namespace fmt
+
+// Newer spdlog exposes its formatting library as spdlog::fmt_lib so callers do not
+// depend on whether it bundles fmt or uses std::format. Shipwright moved to this
+// spelling; alias it onto our shim.
+namespace spdlog {
+namespace fmt_lib = ::fmt;
+} // namespace spdlog

@@ -120,4 +120,14 @@ bool ResourceManager::OtrSignatureCheck(const char* fileName) {
     return std::strncmp(fileName, kOtrPrefix, sizeof(kOtrPrefix) - 1) == 0;
 }
 
+void ResourceManager::DirtyResources(const std::string& searchMask) {
+    // No alt-asset switching on console: nothing to invalidate.
+    (void)searchMask;
+}
+
+size_t ResourceManager::UnloadResource(const std::string& filePath) {
+    (void)filePath;
+    return 0;
+}
+
 } // namespace Ship

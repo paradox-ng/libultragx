@@ -58,6 +58,12 @@ class Fast3dWindow : public Ship::Window {
     // Fast3D render surface the game drives each frame.
     int32_t GetTargetFps();
     void SetTargetFps(int32_t fps);
+
+    // Depth readback at a screen point. Ocarina of Time uses it for its z-checks; the
+    // GX backend does not resolve the EFB depth buffer back to main memory yet, so
+    // this reports 0 (nothing occluded) rather than a wrong value.
+    void GetPixelDepthPrepare(float x, float y);
+    uint16_t GetPixelDepth(float x, float y);
     void SetMaximumFrameLatency(int32_t latency);
     void SetRendererUCode(UcodeHandlers ucode);
     // sRGB / gamma-boost output. Not yet wired to GX gamma (GX_SetDispCopyGamma); a

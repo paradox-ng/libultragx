@@ -50,6 +50,15 @@ class ResourceManager {
     // load (our loader is already synchronous, so it is a thin alias). The
     // raw-pointer helpers load (if needed) and hand back the typed payload.
     std::shared_ptr<IResource> LoadResourceProcess(const std::string& filePath, bool loadExact = false);
+
+    // Mark cached resources as needing a reload. Upstream uses this to drop resources
+    // when the alt-assets setting changes; libultragx loads from a single archive set
+    // and has no alt-asset switching, so this is accepted and ignored.
+    void DirtyResources(const std::string& searchMask);
+
+    // Drop a single cached resource. Console never swaps asset sets at runtime, so
+    // this only needs to satisfy callers that invalidate after an asset change.
+    size_t UnloadResource(const std::string& filePath);
     // Batch preload (a game warms a directory of resources up front). Synchronous
     // here; nothing to do beyond loading each matching entry, which the game also
     // does lazily, so this is a no-op for now.

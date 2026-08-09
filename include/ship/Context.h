@@ -19,7 +19,11 @@ namespace spdlog {
 class logger;
 }
 
+#include "ship/window/FileDropMgr.h"
+#include "ship/config/Config.h"
+
 namespace Ship {
+
 
 class ResourceManager;
 class ConsoleVariable;
@@ -44,8 +48,16 @@ class Context {
     // Singleton hub (matches libultraship usage: Context::GetInstance()->GetX()).
     // The Fast3D interpreter reaches the ResourceManager and CVars through here.
     static std::shared_ptr<Context> GetInstance();
+    // Raw-pointer accessor. Newer libultraship code (Shipwright's resource factories
+    // and scripting reach for it constantly) calls Context::GetRawInstance() where it
+    // does not need to share ownership.
+    static Context* GetRawInstance();
 
     std::shared_ptr<ResourceManager> GetResourceManager();
+    // libultragx keeps its own settings in config.ini and its CVars separately, so
+    // this hands back an inert Config purely so ports that expect libultraship's
+    // JSON config (Shipwright registers version updaters against it) still work.
+    std::shared_ptr<Config> GetConfig();
     std::shared_ptr<ConsoleVariable> GetConsoleVariables();
 
     // libultragx extension: establish the per-game base directory from the
@@ -78,8 +90,11 @@ class Context {
     bool InitConsoleVariables();
     // spdlog::level::level_enum passes through as int (the game computes it from spdlog).
     bool InitLogging(int debugBuildLogLevel = 0, int releaseBuildLogLevel = 0);
+    // allowEmptyPaths matches libultraship: callers that pass a path list which may be
+    // empty (Shipwright's port archive) rely on it not being treated as an error.
     bool InitResourceManager(const std::vector<std::string>& archivePaths = {},
-                             const std::unordered_set<uint32_t>& validHashes = {}, uint32_t reservedThreadCount = 1);
+                             const std::unordered_set<uint32_t>& validHashes = {}, uint32_t reservedThreadCount = 1,
+                             bool allowEmptyPaths = false);
     bool InitControlDeck(std::shared_ptr<ControlDeck> controlDeck = nullptr);
     bool InitConsole();
     bool InitWindow(std::shared_ptr<Window> window = nullptr);
@@ -92,6 +107,13 @@ class Context {
     // drop). Kept so a game's startup sequence compiles and links.
     bool InitCrashHandler() { return true; }
     bool InitFileDropMgr() { return true; }
+    // Drag-and-drop is a desktop affordance; the console has no file drops. Returning
+    // the manager keeps callers (Shipwright registers a spoiler-log drop handler)
+    // compiling and linking, and its handlers simply never fire.
+    FileDropMgr* GetFileDropMgr() {
+        static FileDropMgr sInert;
+        return &sInert;
+    }
     bool InitAudio(AudioSettings settings = {});
 
     std::shared_ptr<Window> GetWindow() const;
@@ -105,6 +127,7 @@ class Context {
 
   private:
     std::shared_ptr<ResourceManager> mResourceManager;
+    std::shared_ptr<Config> mConfig;
     std::shared_ptr<ConsoleVariable> mConsoleVariables;
     std::shared_ptr<Window> mWindow;
     std::shared_ptr<ControlDeck> mControlDeck;

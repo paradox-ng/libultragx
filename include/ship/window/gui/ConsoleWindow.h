@@ -8,6 +8,8 @@ namespace Ship {
 // system itself lives in ship/debug/Console.h.
 class ConsoleWindow : public GuiWindow {
   public:
+    // Upstream clears the dev-console key bindings; there is no console UI here.
+    void ClearBindings() {}
     using GuiWindow::GuiWindow;
     ~ConsoleWindow() override = default;
 

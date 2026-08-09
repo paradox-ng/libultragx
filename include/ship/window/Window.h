@@ -25,6 +25,9 @@ class Gui;
 // the concrete GX-backed implementation.
 class Window {
   public:
+    // Desktop mouse plumbing; console has no cursor to capture or hide.
+    void SetAutoCaptureMouse(bool) {}
+    void SetForceCursorVisibility(bool) {}
     virtual ~Window() = default;
 
     virtual void Init() = 0;

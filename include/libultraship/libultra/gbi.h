@@ -2400,6 +2400,39 @@ typedef union Gfx {
         _g->words.w0 = _SHIFTL(G_LOAD_UCODE, 24, 8) | _SHIFTL(uc_index, 0, 16); \
     })
 
+
+// gSPLoadUcodeL takes a UcodeHandlers enumerator (ucode_s2dex and friends), so the
+// enum has to be visible wherever the macro is used.
+#include "fast/ucodehandlers.h"
+
+// Fast3D extension: sub-texel tile-size interpolation, emitted as five Gfx words.
+// NOTE: the interpreter does NOT yet decode opcode 0x4a - content that uses it will
+// not lerp (and an unhandled command here is a display-list desync risk), so this
+// needs a matching handler in interpreter.cpp before Shipwright's authentic-gfx
+// patches can be trusted.
+#define G_SETTILESIZE_LERP 0x4a
+
+#define __gDPSetTileSizeLerpCoord(g, w, coord) \
+    _DW({                                      \
+        float _f = (coord);                    \
+        (g).words.w = *(uint32_t*)&_f;         \
+    })
+
+#define __gDPSetTileSizeLerp(pkt, t, uls0, ult0, lrs0, lrt0, uls1, ult1, lrs1, lrt1) \
+    _DW({                                                                            \
+        Gfx* _g = (Gfx*)(pkt);                                                       \
+        _g[0].words.w0 = _SHIFTL(G_SETTILESIZE_LERP, 24, 8);                         \
+        _g[0].words.w1 = _SHIFTL(t, 24, 3);                                          \
+        __gDPSetTileSizeLerpCoord(_g[1], w0, uls0);                                  \
+        __gDPSetTileSizeLerpCoord(_g[1], w1, ult0);                                  \
+        __gDPSetTileSizeLerpCoord(_g[2], w0, lrs0);                                  \
+        __gDPSetTileSizeLerpCoord(_g[2], w1, lrt0);                                  \
+        __gDPSetTileSizeLerpCoord(_g[3], w0, uls1);                                  \
+        __gDPSetTileSizeLerpCoord(_g[3], w1, ult1);                                  \
+        __gDPSetTileSizeLerpCoord(_g[4], w0, lrs1);                                  \
+        __gDPSetTileSizeLerpCoord(_g[4], w1, lrt1);                                  \
+    })
+
 #define gSPLoadUcodeL(pkt, uc_index)                                            \
     _DW({                                                                       \
         Gfx* _g = (Gfx*)(pkt);                                                  \

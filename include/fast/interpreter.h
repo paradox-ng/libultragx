@@ -732,6 +732,9 @@ class Interpreter {
     // rapi framebuffer id holding the final image, or -1 when nothing ran.
     int RunPostPasses();
     void LoadPostPassManifest();
+    // 0 = previous game tick, 1 = current tick. Games set this per interpolated
+    // frame (Shipwright drives it from OTRGlobals); the GX backend does not read it yet.
+    float mInterpolationT = 1.0f;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
 };

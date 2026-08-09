@@ -169,6 +169,17 @@ int32_t Fast3dWindow::GetTargetFps() {
     return mTargetFps;
 }
 
+void Fast3dWindow::GetPixelDepthPrepare(float x, float y) {
+    (void)x;
+    (void)y;
+}
+
+uint16_t Fast3dWindow::GetPixelDepth(float x, float y) {
+    (void)x;
+    (void)y;
+    return 0;
+}
+
 void Fast3dWindow::SetTargetFps(int32_t fps) {
     mTargetFps = fps;
     // Forward to the window backend so it can pace the present to this rate. Without

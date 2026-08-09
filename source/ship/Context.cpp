@@ -23,6 +23,17 @@ std::shared_ptr<Context> Context::GetInstance() {
     return sInstance;
 }
 
+Context* Context::GetRawInstance() {
+    return GetInstance().get();
+}
+
+std::shared_ptr<Config> Context::GetConfig() {
+    if (mConfig == nullptr) {
+        mConfig = std::make_shared<Config>();
+    }
+    return mConfig;
+}
+
 std::shared_ptr<ResourceManager> Context::GetResourceManager() {
     if (mResourceManager == nullptr) {
         mResourceManager = std::make_shared<ResourceManager>();
@@ -119,7 +130,8 @@ bool Context::InitLogging(int /*debugBuildLogLevel*/, int /*releaseBuildLogLevel
 
 bool Context::InitResourceManager(const std::vector<std::string>& archivePaths,
                                   const std::unordered_set<uint32_t>& /*validHashes*/,
-                                  uint32_t /*reservedThreadCount*/) {
+                                  uint32_t /*reservedThreadCount*/, bool allowEmptyPaths) {
+    (void)allowEmptyPaths;
     auto rm = GetResourceManager();
     for (const auto& path : archivePaths) {
         if (path.empty()) {

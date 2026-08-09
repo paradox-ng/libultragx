@@ -11,6 +11,9 @@
 
 namespace tinyxml2 {
 class XMLDocument;
+// Forward-declared alongside XMLDocument to match libultraship: consumers declare
+// factory signatures taking tinyxml2::XMLElement* and rely on this header for the name.
+class XMLElement;
 } // namespace tinyxml2
 
 namespace Ship {

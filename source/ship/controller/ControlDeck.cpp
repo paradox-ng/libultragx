@@ -53,6 +53,10 @@ ControlDeck::ControlDeck() {
     memset(mPads, 0, sizeof(OSContPad) * MAXCONTROLLERS);
 }
 
+ControlDeck::ControlDeck(std::vector<uint16_t> validButtons) : ControlDeck() {
+    (void)validButtons;
+}
+
 ControlDeck::~ControlDeck() {
     delete[] mPads;
 }
