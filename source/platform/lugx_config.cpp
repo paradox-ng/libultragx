@@ -7,10 +7,12 @@
 #include <ogc/conf.h>
 #endif
 
-// Defaults: aspect auto (Wii system setting; GameCube 4:3), fps counter on.
+// Defaults: aspect auto (Wii system setting; GameCube 4:3), and every on-screen
+// diagnostic off, so a build that ships without a config.ini looks like a game rather
+// than like a development build. The counter stays one line away for hardware testing.
 LugxConfig g_lugx_config = {
     /* aspect      */ LUGX_ASPECT_AUTO,
-    /* fps_counter */ true,
+    /* fps_counter */ false,
     /* debug_profiler */ false,
     /* frame_interpolation */ false,
     /* antialiasing */ false,
@@ -27,7 +29,7 @@ static const char* kTemplate =
     "\n"
     "# On-screen framerate counter (top-right). Handy while testing on hardware.\n"
     "#   true | false\n"
-    "fps_counter = true\n"
+    "fps_counter = false\n"
     "\n"
     "# On-screen CPU profiler rows under the fps counter (development diagnostic:\n"
     "# whole-frame / draw / vertex-load / per-triangle / combiner microseconds).\n"
