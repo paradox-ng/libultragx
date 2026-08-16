@@ -733,7 +733,11 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
         // offsetting the result, which is precisely a 2x4 matrix applied to the normal,
         // so GX generates it directly from the normal with no CPU work per vertex.
         if (cc.opt_texgen) {
-            const LightingUniforms& lu = mLightingUniforms;
+            // mLighting, NOT the base class's mLightingUniforms: this backend overrides
+            // SetLightingUniforms to store into its own member, so the base one is never
+            // written and reads back all zeroes - which silently produced a zero texgen
+            // matrix and no reflection at all.
+            const LightingUniforms& lu = mLighting;
             Mtx tg;
             memset(tg, 0, sizeof(tg));
             // Normals reach us as the game stores them, spanning roughly plus or minus a
@@ -743,13 +747,19 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             // the reflection unrecognisable. The N64 also clamps the projection to the
             // unit range, which a matrix cannot express; the texture's wrap mode covers
             // the overshoot in practice.
+            // The N64 builds the coordinate as (dot(n, lookat) / 127 + 1) / 4 before the
+            // tile transform (see the mkst Wii port's gfx_sp_vertex), so the projection
+            // is quartered and re-centred, not just normalised. Leaving out the quarter
+            // makes the coordinates four times too large and the reflection tiles into a
+            // grid of repeating highlights; leaving out the centring offset slides it.
             const float kNormalScale = 1.0f / 127.0f;
+            const float kQuarter = 0.25f;
             for (int i = 0; i < 3; i++) {
-                tg[0][i] = lu.lookat_x[i] * kNormalScale * lu.texgen[0][0];
-                tg[1][i] = lu.lookat_y[i] * kNormalScale * lu.texgen[0][2];
+                tg[0][i] = lu.lookat_x[i] * kNormalScale * kQuarter * lu.texgen[0][0];
+                tg[1][i] = lu.lookat_y[i] * kNormalScale * kQuarter * lu.texgen[0][2];
             }
-            tg[0][3] = lu.texgen[0][1];
-            tg[1][3] = lu.texgen[0][3];
+            tg[0][3] = lu.texgen[0][0] * kQuarter + lu.texgen[0][1];
+            tg[1][3] = lu.texgen[0][2] * kQuarter + lu.texgen[0][3];
             GX_LoadTexMtxImm(tg, GX_TEXMTX0, GX_MTX2x4);
             GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_NRM, GX_TEXMTX0);
         } else {
