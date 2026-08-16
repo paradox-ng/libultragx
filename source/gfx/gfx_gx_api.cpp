@@ -513,6 +513,14 @@ static u8 sFogType = GX_FOG_NONE;
 static float sFogStart = 0.0f, sFogEnd = 0.0f;
 static GXColor sFogColor = { 0, 0, 0, 0 };
 
+// Which of the three paths Super Mario 64 actually reaches was measured on hardware by
+// counting each of them through the on-screen readout. The distance ramp ran to tens of
+// thousands of draws and enabled the fog unit every single time, with no draw bailing out
+// of the conversion. The constant veil and the vertex-alpha fallback were never reached at
+// all, in the castle, on the grounds, or in Bob-omb Battlefield including explosions - so
+// those two remain correct by construction rather than by observation, and any game that
+// does reach them is the first real test of them.
+
 // The N64 also carries a fog factor in each vertex's alpha, which the fog unit cannot
 // express because it is per-vertex data rather than a function of distance. That case
 // gets a texture environment stage instead: the stage mixes whatever the combiner
@@ -522,7 +530,7 @@ static GXColor sFogColor = { 0, 0, 0, 0 };
 // A stage may only reference a single constant colour, so the fog colour goes in one and
 // the factor comes from the vertex. The remaining case, a constant veil with no per-pixel
 // variation, would need a second constant and is left alone for now.
-static bool lugx_apply_tev_fog(const CCFeatures& cc, const CombinerUniforms& u) {
+static bool lugx_apply_tev_fog(const CCFeatures& cc, const CombinerUniforms& u, bool hasVertexAlpha) {
     if (!cc.opt_fog) {
         return false;
     }
@@ -530,8 +538,22 @@ static bool lugx_apply_tev_fog(const CCFeatures& cc, const CombinerUniforms& u) 
                           255 };
 
     if (u.fog_params[3] == 2.0f) {
+        // The factor is the vertex's own alpha, so a draw that carries no alpha has no
+        // factor to offer. The desktop reference reads zero in that case and leaves the
+        // draw untouched; here the rasterised alpha would default to fully opaque and
+        // paint the whole draw in the fog colour, which is the worst possible reading of
+        // "no fog". Leave it alone instead.
+        if (!hasVertexAlpha) {
+            return false;
+        }
         // Factor carried per vertex. One stage suffices: the factor arrives as the
         // rasterised alpha, so the stage's single constant is free for the fog colour.
+        //
+        // Known approximation: the reference also hands the combiner a shade alpha of 1.0
+        // here, because on the N64 the fog factor had overwritten the vertex alpha. GX
+        // rasterises a single alpha, so it cannot be both the factor and 1.0 at once. A
+        // second colour channel could carry one of them if a game is ever found that
+        // needs it; no display list reached this path in Super Mario 64.
         GX_SetTevKColor(GX_KCOLOR0, fog);
         GX_SetTevKColorSel(GX_TEVSTAGE1, GX_TEV_KCSEL_K0);
         GX_SetTevOrder(GX_TEVSTAGE1, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
@@ -682,8 +704,9 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     // texels render opaque (a solid rectangle around text, broken cutouts).
     lugx_set_alpha_test(cc.opt_alpha_threshold || cc.opt_texture_edge, 128);
     // Fog reaches us either as a distance ramp, which the fog unit handles, or carried in
-    // the vertex alpha, which needs its own stage after the combiner's.
-    lugx_apply_tev_fog(cc, mCombinerUniforms);
+    // the vertex alpha, which needs its own stage after the combiner's. The vertex-alpha
+    // case depends on whether this draw supplies an alpha at all, which the vertex layout
+    // below determines, so that call waits until the stride has been read.
     DZ("post-tev");
     if (g_gx_stop_at == 1 || g_gx_stop_at == 10) { dtc++; return; }
 
@@ -704,6 +727,16 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
     const int shadeFloats = stride - shadeOff;
     const bool hasShade = shadeFloats >= 3;
     const bool useAlpha = shadeFloats >= 4;
+    lugx_apply_tev_fog(cc, mCombinerUniforms, useAlpha);
+    // The distance ramp leaves the rasterised alpha free, and the reference hands the
+    // combiner a flat 1.0 there: on the N64 the RSP wrote the fog factor over the vertex
+    // alpha, so a fogged draw's combiner never saw the original value. Match that, or a
+    // fogged surface whose combiner reads shade alpha comes out at the wrong opacity.
+    const bool fogOpaqueShade = cc.opt_fog && mCombinerUniforms.fog_params[3] == 0.0f;
+    // Measured on hardware: no draw in Super Mario 64 is at once fogged, unlit and
+    // carrying a vertex alpha short of opaque, so forcing it opaque changes nothing there.
+    // It is kept because it is what the N64 did, and a game that does mix the three would
+    // otherwise draw fogged surfaces at the wrong opacity.
     // When the combiner uses shade and lighting is on, the vbo's shade slot holds the
     // object-space NORMAL (per-vertex) and GX computes the lit colour in hardware;
     // otherwise the shade slot is a vertex colour we submit directly.
@@ -970,7 +1003,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
             GX_Normal3f32(v[shadeOff + 0], v[shadeOff + 1], v[shadeOff + 2]);
         }
         if (submitColor) {
-            u8 a = useAlpha ? float_to_u8(v[shadeOff + 3]) : 255;
+            u8 a = (useAlpha && !fogOpaqueShade) ? float_to_u8(v[shadeOff + 3]) : 255;
             GX_Color4u8(float_to_u8(v[shadeOff + 0]), float_to_u8(v[shadeOff + 1]),
                         float_to_u8(v[shadeOff + 2]), a);
         }
@@ -1099,7 +1132,7 @@ void GfxRenderingAPIGX::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_
                 k += 3;
             }
             if (submitColor) {
-                u8 al = useAlpha ? float_to_u8(c.a[k + 3]) : 255;
+                u8 al = (useAlpha && !fogOpaqueShade) ? float_to_u8(c.a[k + 3]) : 255;
                 GX_Color4u8(float_to_u8(c.a[k]), float_to_u8(c.a[k + 1]), float_to_u8(c.a[k + 2]), al);
                 k += 4;
             }
