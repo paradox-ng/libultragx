@@ -57,6 +57,51 @@ Lighting uses GX hardware: the interpreter passes vertex normals plus per-light
 direction coefficients, and GX computes the clamped diffuse term into the vertex
 colour channel.
 
+## Fog
+
+The N64 supplies a fog factor three ways, and only one of them is a function of
+distance, so only one can use GX's dedicated fog unit.
+
+- **A ramp over depth** drives the fog unit, which costs no TEV stage and no CPU
+  work. Choosing the parameters takes care. The N64 ramps its factor over depth
+  *after* the perspective divide, so the unit must compare against stored depth as it
+  stands rather than converting it back to an eye-space distance, which would bend the
+  straight line into a different curve. The ends of the ramp are solved from the
+  game's own matrix, which carries the linear relationship between its depth and its
+  distance, rather than from this backend's pass-through near and far planes, which
+  have nothing to do with the game's.
+- **A factor carried in each vertex's alpha** cannot use the unit, because it is
+  per-vertex data rather than depth. It gets one TEV stage that mixes the combiner's
+  output toward the fog colour by the rasterised alpha.
+- **A constant veil** needs both the fog colour and a blend amount at once, and a TEV
+  stage may reference only one constant colour, so it is split across two stages.
+
+On the depth ramp the N64's RSP wrote the computed factor over the vertex alpha,
+which means a fogged draw's combiner never saw the alpha the vertex started with.
+The backend reproduces that by handing the combiner a flat opaque shade alpha there.
+
+Only the depth ramp is confirmed against real output; it was measured running to tens
+of thousands of draws in Super Mario 64 with the fog unit engaged every time. The
+other two paths are not reached by that game at all, so they stand on construction
+rather than observation, and the first game to reach them is their first real test.
+
+## Reflection mapping
+
+Surfaces that ask for generated texture coordinates (metal and chrome, and Mario's
+face highlight on the title screen) get them from GX rather than the CPU. The N64
+projects the vertex normal onto two lookat vectors, then scales and offsets the
+result through the usual tile pipeline, which is exactly a 2x4 matrix applied to the
+normal. GX generates texture coordinates that way natively, from the normal it
+already receives for lighting, so this costs no CPU work per vertex and changes
+nothing about what is submitted.
+
+Two details matter. The normal arrives in the game's own range rather than unit
+length, and the N64 quarters and re-centres the projection before the tile transform,
+so both factors have to be folded into the matrix; leaving either out puts the
+coordinates far out of range, which the texture's wrap mode turns into a grid of
+repeating highlights. And GX feeds this matrix the *untransformed* vertex data, so
+the normal it sees is the one submitted, independent of the normal matrix.
+
 ## Performance
 
 `DrawTriangles` itself is a small fraction of the frame; the interpreter's
@@ -100,3 +145,13 @@ from the window rather than requesting a size of its own.
   interpreter to keep modelview and projection separate and to feed native quantized
   vertex arrays (the N64 vertices are already s16/s8). This is the largest structural
   optimization and is documented against the GX manual's viewing chapter.
+- The N64's other texture coordinate generation mode, which takes an inverse cosine of
+  the projection rather than the projection itself. That is not expressible as a
+  matrix, so it currently falls back to the linear form.
+- Native colour-index textures. Index data is expanded through its palette on the CPU
+  and uploaded as full colour. GX can sample an indexed texture against a loaded
+  palette directly, which would cut those textures to a quarter or an eighth of the
+  memory, at the cost of palette plumbing.
+- Compressed textures. The N64's dominant 16-bit RGBA is already stored losslessly at
+  16 bits per texel, so the only remaining lever for texture memory is GX's block
+  compression at 4 bits per texel, which is lossy.

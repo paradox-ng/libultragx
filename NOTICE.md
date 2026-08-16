@@ -29,7 +29,13 @@ a new fixed-function GX/TEV backend, not to reimplement it.
 Adopted from [libultraship](https://github.com/Kenix3/libultraship) (MIT), with
 their copyright retained:
 
-- `source/fast/interpreter.cpp` (the gfx_pc interpreter, verbatim)
+- `source/fast/interpreter.cpp` (the gfx_pc interpreter). Adopted as a whole and
+  since **modified**, so it is no longer byte-identical to upstream. The changes are
+  those the console needs: a per-triangle render-state decode cache to fit the frame
+  budget, colour-index textures expanded through their palette when the backend
+  cannot do a dependent lookup, palette formats the desktop path never referenced,
+  and the render dimensions taken from the window rather than requested of it. The
+  file remains MIT under its original copyright
 - `include/fast/interpreter.h`, `lus_gbi.h`, `f3dex.h`, `f3dex2.h`,
   `ucodehandlers.h`
 - `include/fast/backends/gfx_rendering_api.h`, `gfx_window_manager_api.h`

@@ -20,42 +20,54 @@ compile without modification.
 
 ## Status
 
-Super Mario 64, through the [Ghostship](https://github.com/HarbourMasters/Ghostship)
-fork, is playable on the Wii build (tested under Dolphin): it boots, renders the full
-game, plays music and sound effects, and reads and writes save files. The GameCube
-(24 MB of RAM) is the constraint that drives the design; the GameCube build compiles
-and links, but native GameCube runtime bring-up (SD access on the console) is still in
-progress, so the Wii build is what currently runs.
+Three ports are in the tree, at three different stages. All testing so far is
+under Dolphin; real console hardware remains the final check.
+
+| Port | Game | Microcode | State |
+|---|---|---|---|
+| [Ghostship](https://github.com/HarbourMasters/Ghostship) | Super Mario 64 | F3D | Playable start to finish: renders, plays music and sound effects, saves |
+| [Starship](https://github.com/HarbourMasters/Starship) | Star Fox 64 | F3DEX | Boots and runs at 30 fps with audio; some menu geometry is still wrong |
+| [Shipwright](https://github.com/HarbourMasters/Shipwright) | Ocarina of Time | F3DEX2 | Compiles as native PowerPC and links; does not yet run |
+
+The GameCube is the constraint that drives the design, because its 24 MB of RAM is
+what everything must fit in. The GameCube build compiles and links, but native
+GameCube runtime bring-up has not happened yet: the console has no built-in SD
+slot, so reaching the asset archive needs an SD Gecko or SD2SP2 adapter and that
+path is unproven. The Wii build is what currently runs.
 
 - **Rendering (Fast3D on GX).** The libultraship Fast3D interpreter is driven by an
   original GX backend. TEV stages implement the N64 color combiner; lighting and
   texturing use GX hardware. Vertex transform and near-plane clipping run on the CPU
   (following the sm64-port Wii reference) and feed GX clip-space coordinates through a
   pass-through projection. Native GX texture formats (RGB5A3, I, IA) keep texture
-  memory within the GameCube budget. The whole game renders: the 3D world, actors,
-  HUD, menus, dialogs, and the interactive title-screen head. Anti-aliasing is not yet
-  enabled.
+  memory within the GameCube budget, and colour-index textures are expanded through
+  their palette on the CPU because GX has no dependent palette fetch. Fog, reflection
+  mapping, alpha-test cutouts and backface culling are all in place. The whole game
+  renders: the 3D world, actors, HUD, menus, dialogs, and the interactive
+  title-screen head.
 - **Audio.** The game's audio synthesis runs on the console and plays through the DSP
   via libogc's asndlib, so music and sound effects work.
 - **Performance.** The game runs at its native 30 fps, with optional 60 fps frame
   interpolation (the simulation stays at 30 fps; in-between frames are interpolated).
   A per-triangle render-state cache in the interpreter keeps per-frame CPU within the
   frame budget.
+- **Input.** The GameCube pad, the Wii Remote with a Nunchuk, and the Classic
+  Controller, all mapped onto the N64 pad. Both kinds are read together, so a player
+  can switch controllers mid-game without telling the game.
 - **Resource system.** `.o2r` archive mounting, CRC64 path hashing, `ResourceManager`,
   and a `ResourceLoader` keyed on (format, type, version). Binary factories cover the
   Fast3D types (display list, vertex, matrix, texture, light) and the audio types
   (bank, sequence, sample), plus Blob and JSON. Class and method names track
   libultraship, so a port's factory registrations build against libultragx unchanged.
 - **Framework.** `Ship::Context`, the `Ship::Window` abstraction with a Fast3D window
-  (`Fast::Fast3dWindow`), a `ControlDeck` reading the GameCube pad and Wii remote
-  through libogc, an event system, and the C bridges (resource, cvar, window, events,
-  audio).
+  (`Fast::Fast3dWindow`), a `ControlDeck` over libogc, an event system, and the C
+  bridges (resource, cvar, window, events, audio).
 - **Platform.** SD card mounting (SD2SP2 / SD Gecko / Wii SD) and per-game path
   resolution from `argv[0]`. A plain-text `config.ini` beside the archive selects the
-  aspect ratio (4:3, 16:9, or the Wii's system setting), the on-screen fps counter,
-  frame interpolation, and antialiasing.
+  aspect ratio, the on-screen fps counter, frame interpolation, and antialiasing.
 
-See `docs/ARCHITECTURE.md` for the design and roadmap.
+See `docs/ARCHITECTURE.md` for the design, `docs/GFX_GX.md` for the rendering
+backend, and `docs/INTEGRATION.md` for how a port is brought up against it.
 
 ## Building
 
@@ -70,7 +82,10 @@ pulls the `devkitpro/devkitppc` image (1-2 GB). GameCube is the default target.
 ```
 
 Several standalone test apps are included and selected with `APP=` (for example
-`smoke`, `realdltest`, `archtest`, `gfxdemo`).
+`smoke`, `realdltest`, `archtest`, `gfxdemo`). They exist so each subsystem can be
+exercised on its own, without a game: `archtest` opens an `.o2r` off the SD card,
+`realdltest` loads a real display list from one and renders it, and `gfxdemo`
+drives the combiner and texture paths directly.
 
 A fresh clone needs its submodules before building, since the prism shader
 translator is vendored as a submodule:
@@ -88,9 +103,23 @@ Dolphin runs natively on the host and loads the built `.dol`:
 ./run.sh libultragx-wii.dol    # boot the Wii build instead
 ```
 
-Press START (GameCube controller) or HOME (Wii remote) to exit. Dolphin is not
-bit-accurate to the Flipper and Hollywood GPUs, so real hardware remains the final
-check.
+In the test apps, START (GameCube controller) or HOME (Wii remote) exits. Dolphin is
+not bit-accurate to the Flipper and Hollywood GPUs, so real hardware remains the
+final check.
+
+## Configuration
+
+Games read a plain-text `config.ini` from their folder on the SD card, next to the
+asset archive. It is created with commented defaults on first boot, and an existing
+file is never overwritten.
+
+| Key | Values | Default | Effect |
+|---|---|---|---|
+| `aspect_ratio` | `auto`, `4:3`, `16:9` | `auto` | `auto` follows the Wii's system setting and is 4:3 on GameCube. `16:9` is anamorphic: it widens the game's field of view without stretching the framebuffer |
+| `fps_counter` | `true`, `false` | `false` | On-screen frame rate, top right |
+| `frame_interpolation` | `true`, `false` | `false` | Render interpolated in-between frames for 60 fps motion. Game logic stays at 30 fps |
+| `antialiasing` | `true`, `false` | `false` | GX hardware 3-sample edge antialiasing. See `docs/GFX_GX.md` for the tradeoff, which is real |
+| `debug_profiler` | `true`, `false` | `false` | Development diagnostic: per-frame CPU timings under the fps counter |
 
 ## Layout
 
@@ -102,7 +131,7 @@ libultragx/
 │   └── fast/              # Fast3D interpreter + GX window/resource headers
 ├── source/
 │   ├── apps/              # standalone test apps (smoke, realdltest, fwtest, ...)
-│   ├── platform/          # libogc platform layer (sd, paths)
+│   ├── platform/          # libogc platform layer (sd, paths, config, wpad shim)
 │   ├── gfx/               # GX rendering backend (TEV combiner, T&L, textures)
 │   ├── fast/              # Fast3D interpreter, Fast3dWindow, resource factories
 │   ├── ship/              # Context, resource (archive/loader/factories), events, controller
@@ -111,7 +140,7 @@ libultragx/
 │   ├── bridge/            # C bridge implementations
 │   └── log/               # log sink
 ├── extern/                # vendored prism (shader translator) + nlohmann json
-├── docs/ARCHITECTURE.md   # design + roadmap
+├── docs/                  # architecture, the GX backend, port integration
 ├── Makefile               # devkitPPC build, GameCube default (PLATFORM=wii for Wii)
 ├── Dockerfile             # pinned build image (build.sh uses upstream by default)
 ├── build.sh               # containerized `make` wrapper (APP=, PLATFORM=)
