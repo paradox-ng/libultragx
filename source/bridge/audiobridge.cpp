@@ -37,9 +37,6 @@
 #define AUDIO_BUFFER_COUNT     6
 #define AUDIO_BUFFER_SIZE      (AUDIO_SAMPLES_HIGH * 2 * AUDIO_UPDATES_MAX * sizeof(int16_t))
 #define AUDIO_BYTES_PER_FRAME  (2 * sizeof(int16_t))
-// Hand ASND a buffer only once this many bytes have accumulated (~70ms of stereo
-// 32kHz), so its two-buffer queue covers ~140ms rather than ~70ms.
-#define AUDIO_COALESCE_BYTES   (2240 * AUDIO_BYTES_PER_FRAME)
 
 enum AudioBufferState {
     BUFFER_FREE,
@@ -234,11 +231,11 @@ int32_t AudioPlayerBuffered() {
 }
 
 int32_t AudioPlayerGetDesiredBuffered() {
-    // Frames of stereo audio the game aims to keep queued (~52ms at 32kHz). This is the
-    // setpoint for the game's own feedback loop, not a hard limit. Raising it to ~106ms
-    // and adding a two-buffer pre-roll was measured to change nothing (1.89% vs 1.74%
-    // dropout on a constant tone), so the remaining dropouts are not buffer depth.
-    return 1680;
+    // Frames of stereo audio the game aims to keep queued. This is the setpoint for the
+    // game's own sample-count feedback, not a hard limit. Keep it at the value SM64 was
+    // tuned and verified against - raising it changes which of the game's high/low
+    // sample counts it picks every frame.
+    return 1100;
 }
 
 AudioChannelsSetting GetAudioChannels() {
@@ -255,27 +252,6 @@ void AudioPlayerPlayFrame(const uint8_t* buf, size_t len) {
     }
 
 
-    // Coalesce submissions. ASND holds only TWO buffers per voice, so the audio it has
-    // in hand is 2 x this buffer's duration - and the game submits one frame's worth
-    // (~35ms) per frame, which leaves ASND riding on 35-70ms and running dry on any
-    // jitter. Batching two submissions into one buffer doubles what ASND holds without
-    // touching the game's generation cadence, which has to stay one batch per frame
-    // because the sequence player and ADSR envelopes advance per update.
-    {
-        static uint8_t s_stage[AUDIO_BUFFER_SIZE];
-        static size_t s_stage_len = 0;
-        if (s_stage_len + len > AUDIO_BUFFER_SIZE) {
-            s_stage_len = 0; // cannot happen with sane sizes; resync rather than overrun
-        }
-        memcpy(s_stage + s_stage_len, buf, len);
-        s_stage_len += len;
-        if (s_stage_len < AUDIO_COALESCE_BYTES) {
-            return; // hold it back until there is a full-size buffer to hand over
-        }
-        buf = s_stage;
-        len = s_stage_len;
-        s_stage_len = 0;
-    }
 
     release_finished_buffers();
 
